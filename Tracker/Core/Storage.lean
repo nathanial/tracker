@@ -137,7 +137,7 @@ def updateIssue (config : Config) (id : Nat) (modify : Issue → Issue) : IO (Op
 /-- Create a new issue -/
 def createIssue (config : Config) (title : String) (description : String := "")
     (priority : Priority := .medium) (labels : Array String := #[])
-    (assignee : Option String := none) : IO Issue := do
+    (assignee : Option String := none) (project : Option String := none) : IO Issue := do
   let id ← nextIssueId config
   let timestamp ← nowIso8601
   let issue : Issue := {
@@ -149,6 +149,7 @@ def createIssue (config : Config) (title : String) (description : String := "")
     updated := timestamp
     labels
     assignee
+    project
     blocks := #[]
     blockedBy := #[]
     description

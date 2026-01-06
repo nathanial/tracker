@@ -62,8 +62,9 @@ def handleAdd (result : ParseResult) (mode : Mode) : IO Result := do
       | some l => #[l]
       | none => #[]
     let assignee := result.get (α := String) "assignee"
+    let project := result.get (α := String) "project"
     try
-      let issue ← Storage.createIssue config title description priority labels assignee
+      let issue ← Storage.createIssue config title description priority labels assignee project
       return .success (formatIssue issue mode)
     catch e =>
       return .error (formatError s!"Failed to create issue: {e}" mode)

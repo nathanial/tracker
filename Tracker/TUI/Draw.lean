@@ -161,32 +161,74 @@ def drawDetail (buf : Buffer) (state : AppState) (startX startY : Nat) (width he
 
   buf
 
-/-- Draw a text input field -/
+/-- Draw a rounded border box -/
+def drawBorder (buf : Buffer) (x y width height : Nat) (focused : Bool) : Buffer := Id.run do
+  let mut buf := buf
+  if width < 2 || height < 2 then return buf
+
+  -- Border characters (rounded style)
+  let topLeft := '╭'
+  let topRight := '╮'
+  let bottomLeft := '╰'
+  let bottomRight := '╯'
+  let horizontal := '─'
+  let vertical := '│'
+
+  let borderStyle := if focused then
+    Style.default.withFg (.ansi .cyan)
+  else
+    Style.default.withFg (.ansi .brightBlack)
+
+  -- Draw corners
+  buf := buf.setStyled x y topLeft borderStyle
+  buf := buf.setStyled (x + width - 1) y topRight borderStyle
+  buf := buf.setStyled x (y + height - 1) bottomLeft borderStyle
+  buf := buf.setStyled (x + width - 1) (y + height - 1) bottomRight borderStyle
+
+  -- Draw horizontal borders
+  for xi in [x + 1 : x + width - 1] do
+    buf := buf.setStyled xi y horizontal borderStyle
+    buf := buf.setStyled xi (y + height - 1) horizontal borderStyle
+
+  -- Draw vertical borders
+  for yi in [y + 1 : y + height - 1] do
+    buf := buf.setStyled x yi vertical borderStyle
+    buf := buf.setStyled (x + width - 1) yi vertical borderStyle
+
+  buf
+
+/-- Draw a text input field with border -/
 def drawTextInput (buf : Buffer) (input : TextInput) (startX startY : Nat) (width : Nat)
     (focused : Bool) : Buffer := Id.run do
   let mut buf := buf
 
-  -- Calculate visible portion of text
-  let maxWidth := if width > 2 then width - 2 else 1
+  -- Draw border around input (3 rows tall: border, text, border)
+  let borderWidth := if width > 4 then width else 4
+  buf := drawBorder buf startX startY borderWidth 3 focused
+
+  -- Calculate visible portion of text (inside the border)
+  let innerX := startX + 1
+  let innerY := startY + 1
+  let maxWidth := if borderWidth > 4 then borderWidth - 4 else 1
   let text := input.text.take maxWidth
   let cursor := min input.cursor maxWidth
 
-  -- Draw text
+  -- Draw text inside border
   let textStyle := if focused then
     Style.default.withFg (.ansi .white)
   else
     Style.default.withFg (.ansi .brightBlack)
-  buf := buf.writeString startX startY text textStyle
+  buf := buf.writeString innerX innerY text textStyle
 
   -- Draw cursor if focused
   if focused then
-    let cursorX := startX + cursor
+    let cursorX := innerX + cursor
     let cursorChar := if cursor < text.length then
       text.get ⟨cursor⟩
     else
       ' '
     let cursorStyle := Style.default.withBg (.ansi .white) |>.withFg (.ansi .black)
-    buf := buf.writeString cursorX startY cursorChar.toString cursorStyle
+    buf := buf.writeString cursorX innerY cursorChar.toString cursorStyle
 
   buf
 
@@ -202,9 +244,9 @@ def drawFormField (buf : Buffer) (label : String) (input : TextInput) (startX st
     Style.default.withFg (.ansi .white)
   buf := buf.writeString startX startY s!"{label}:" labelStyle
 
-  -- Draw input on next line
-  let inputX := startX + 2
-  let inputWidth := if width > inputX - startX + 2 then width - (inputX - startX) - 2 else 10
+  -- Draw bordered input on next line (takes 3 rows for border)
+  let inputX := startX
+  let inputWidth := if width > 2 then width - 2 else 10
   buf := drawTextInput buf input inputX (startY + 1) inputWidth focused
 
   buf
@@ -255,25 +297,29 @@ def drawForm (buf : Buffer) (state : AppState) (startX startY : Nat) (width heig
   buf := buf.writeString startX startY title Style.bold
   let mut y := startY + 2
 
-  -- Title field
+  -- Title field (label + 3-row bordered input + gap = 5 rows)
   buf := drawFormField buf "Title" form.title startX y width (form.focusedField == .title)
-  y := y + 3
+  y := y + 5
 
   -- Description field
   buf := drawFormField buf "Description" form.description startX y width (form.focusedField == .description)
-  y := y + 3
+  y := y + 5
 
-  -- Priority selector
+  -- Priority selector (not bordered, keeps 3-row spacing)
   buf := drawPrioritySelector buf form.priority startX y (form.focusedField == .priority)
   y := y + 3
 
   -- Labels field
   buf := drawFormField buf "Labels (comma-separated)" form.labels startX y width (form.focusedField == .labels)
-  y := y + 3
+  y := y + 5
 
   -- Assignee field
   buf := drawFormField buf "Assignee" form.assignee startX y width (form.focusedField == .assignee)
-  y := y + 3
+  y := y + 5
+
+  -- Project field
+  buf := drawFormField buf "Project" form.project startX y width (form.focusedField == .project)
+  y := y + 5
 
   -- Validation message
   if !form.isValid then

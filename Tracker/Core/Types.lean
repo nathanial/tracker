@@ -101,6 +101,7 @@ structure Issue where
   updated : String      -- ISO 8601 timestamp
   labels : Array String
   assignee : Option String
+  project : Option String -- Project this issue belongs to
   blocks : Array Nat    -- Issue IDs this issue blocks
   blockedBy : Array Nat -- Issue IDs blocking this one
   description : String
@@ -148,6 +149,9 @@ def toJson (issue : Issue) : String :=
   let assigneeJson := match issue.assignee with
     | some a => s!"\"{a}\""
     | none => "null"
+  let projectJson := match issue.project with
+    | some p => s!"\"{p}\""
+    | none => "null"
   let progressJson := issue.progress.map ProgressEntry.toJson |>.toList |> String.intercalate ", "
   s!"\{
   \"id\": {issue.id},
@@ -158,6 +162,7 @@ def toJson (issue : Issue) : String :=
   \"updated\": \"{issue.updated}\",
   \"labels\": [{labelsJson}],
   \"assignee\": {assigneeJson},
+  \"project\": {projectJson},
   \"blocks\": [{blocksJson}],
   \"blocked_by\": [{blockedByJson}],
   \"description\": \"{escapeJson issue.description}\",
@@ -171,7 +176,10 @@ def toCompactJson (issue : Issue) : String :=
   let assigneeJson := match issue.assignee with
     | some a => s!"\"{a}\""
     | none => "null"
-  s!"\{\"id\":{issue.id},\"title\":\"{escapeJson issue.title}\",\"status\":{issue.status.toJson},\"priority\":{issue.priority.toJson},\"created\":\"{issue.created}\",\"updated\":\"{issue.updated}\",\"labels\":[{labelsJson}],\"assignee\":{assigneeJson},\"blocks\":[{blocksJson}],\"blocked_by\":[{blockedByJson}]}"
+  let projectJson := match issue.project with
+    | some p => s!"\"{p}\""
+    | none => "null"
+  s!"\{\"id\":{issue.id},\"title\":\"{escapeJson issue.title}\",\"status\":{issue.status.toJson},\"priority\":{issue.priority.toJson},\"created\":\"{issue.created}\",\"updated\":\"{issue.updated}\",\"labels\":[{labelsJson}],\"assignee\":{assigneeJson},\"project\":{projectJson},\"blocks\":[{blocksJson}],\"blocked_by\":[{blockedByJson}]}"
 
 end Issue
 

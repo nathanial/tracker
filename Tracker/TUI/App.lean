@@ -75,8 +75,8 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
       errorMessage := ""
     }.clampSelection
 
-  | .createIssue title description priority labels assignee =>
-    let issue ← Storage.createIssue state.config title description priority labels assignee
+  | .createIssue title description priority labels assignee project =>
+    let issue ← Storage.createIssue state.config title description priority labels assignee project
     let issues ← Storage.loadAllIssues state.config
     return { state with
       issues
@@ -86,14 +86,15 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
       errorMessage := ""
     }.clampSelection
 
-  | .updateIssue id title description priority labels assignee =>
+  | .updateIssue id title description priority labels assignee project =>
     let result ← Storage.updateIssue state.config id fun issue =>
       { issue with
         title
         description
         priority
         labels
-        assignee }
+        assignee
+        project }
     match result with
     | some updatedIssue =>
       let issues ← Storage.loadAllIssues state.config

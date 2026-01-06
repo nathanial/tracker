@@ -17,8 +17,8 @@ inductive PendingAction where
   | closeIssue (id : Nat)
   | reopenIssue (id : Nat)
   | refreshIssues
-  | createIssue (title : String) (description : String) (priority : Priority) (labels : Array String) (assignee : Option String)
-  | updateIssue (id : Nat) (title : String) (description : String) (priority : Priority) (labels : Array String) (assignee : Option String)
+  | createIssue (title : String) (description : String) (priority : Priority) (labels : Array String) (assignee : Option String) (project : Option String)
+  | updateIssue (id : Nat) (title : String) (description : String) (priority : Priority) (labels : Array String) (assignee : Option String) (project : Option String)
   deriving BEq, Inhabited
 
 /-- Update result with optional pending action -/
@@ -166,15 +166,16 @@ def updateFormView (state : AppState) (key : KeyEvent) : UpdateResult :=
         let priority := form.priority
         let labels := form.getLabels
         let assignee := form.getAssignee
+        let project := form.getProject
         match form.editingIssueId with
         | some id =>
           { state := state.setStatus "Saving..."
             shouldQuit := false
-            pendingAction := .updateIssue id title description priority labels assignee }
+            pendingAction := .updateIssue id title description priority labels assignee project }
         | none =>
           { state := state.setStatus "Creating..."
             shouldQuit := false
-            pendingAction := .createIssue title description priority labels assignee }
+            pendingAction := .createIssue title description priority labels assignee project }
       else
         { state := state.setError "Title is required", shouldQuit := false, pendingAction := .none }
     else

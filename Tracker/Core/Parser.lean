@@ -23,6 +23,7 @@ structure FrontmatterData where
   updated : Option String := none
   labels : Array String := #[]
   assignee : Option String := none
+  project : Option String := none
   blocks : Array Nat := #[]
   blockedBy : Array Nat := #[]
   deriving Repr, Inhabited
@@ -110,6 +111,14 @@ def parseFrontmatter (content : String) : FrontmatterData := Id.run do
             value.drop 1 |>.dropRight 1
           else value
           data := { data with assignee := some v }
+      | "project" =>
+        if value == "null" || value.isEmpty then
+          data := { data with project := none }
+        else
+          let v := if value.startsWith "\"" && value.endsWith "\"" then
+            value.drop 1 |>.dropRight 1
+          else value
+          data := { data with project := some v }
       | "blocks" => data := { data with blocks := parseNatArray value }
       | "blocked_by" | "blockedBy" => data := { data with blockedBy := parseNatArray value }
       | _ => pure ()  -- Ignore unknown keys
@@ -186,6 +195,7 @@ def toIssue (parsed : ParsedIssue) (defaultId : Nat) (defaultTimestamp : String)
   , updated := parsed.frontmatter.updated.getD defaultTimestamp
   , labels := parsed.frontmatter.labels
   , assignee := parsed.frontmatter.assignee
+  , project := parsed.frontmatter.project
   , blocks := parsed.frontmatter.blocks
   , blockedBy := parsed.frontmatter.blockedBy
   , description := parsed.description
@@ -200,6 +210,9 @@ def issueToMarkdown (issue : Issue) : String :=
   let assigneeStr := match issue.assignee with
     | some a => a
     | none => ""
+  let projectStr := match issue.project with
+    | some p => p
+    | none => ""
   let progressLines := issue.progress.map fun e =>
     s!"- [{e.timestamp}] {e.message}"
   let progressSection := if progressLines.isEmpty then ""
@@ -213,6 +226,7 @@ created: {issue.created}
 updated: {issue.updated}
 labels: {labelsStr}
 assignee: {assigneeStr}
+project: {projectStr}
 blocks: {blocksStr}
 blocked_by: {blockedByStr}
 ---

@@ -33,6 +33,8 @@ def trackerCommand : Command := command "tracker" do
       (description := "Assign to someone")
     Cmd.flag "description" (short := some 'd')
       (description := "Issue description")
+    Cmd.flag "project" (short := some 'P')
+      (description := "Project this issue belongs to")
 
   -- list subcommand
   Cmd.subcommand "list" do
