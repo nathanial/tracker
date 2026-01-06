@@ -271,6 +271,10 @@ def drawForm (buf : Buffer) (state : AppState) (startX startY : Nat) (width heig
   buf := drawFormField buf "Labels (comma-separated)" form.labels startX y width (form.focusedField == .labels)
   y := y + 3
 
+  -- Assignee field
+  buf := drawFormField buf "Assignee" form.assignee startX y width (form.focusedField == .assignee)
+  y := y + 3
+
   -- Validation message
   if !form.isValid then
     buf := buf.writeString startX y "Title is required" (Style.default.withFg (.ansi .red))

@@ -84,6 +84,7 @@ inductive FormField where
   | description
   | priority
   | labels
+  | assignee
   deriving BEq, Inhabited
 
 namespace FormField
@@ -92,19 +93,22 @@ def next : FormField → FormField
   | .title => .description
   | .description => .priority
   | .priority => .labels
-  | .labels => .title
+  | .labels => .assignee
+  | .assignee => .title
 
 def prev : FormField → FormField
-  | .title => .labels
+  | .title => .assignee
   | .description => .title
   | .priority => .description
   | .labels => .priority
+  | .assignee => .labels
 
 def toString : FormField → String
   | .title => "Title"
   | .description => "Description"
   | .priority => "Priority"
   | .labels => "Labels"
+  | .assignee => "Assignee"
 
 end FormField
 
@@ -118,6 +122,8 @@ structure FormState where
   priority : Priority := .medium
   /-- Labels input (comma-separated) -/
   labels : TextInput := {}
+  /-- Assignee input -/
+  assignee : TextInput := {}
   /-- Currently focused field -/
   focusedField : FormField := .title
   /-- Issue being edited (for edit mode) -/
@@ -135,6 +141,7 @@ def fromIssue (issue : Issue) : FormState :=
     description := TextInput.clear.setText issue.description
     priority := issue.priority
     labels := TextInput.clear.setText (String.intercalate ", " issue.labels.toList)
+    assignee := TextInput.clear.setText (issue.assignee.getD "")
     focusedField := .title
     editingIssueId := some issue.id }
 
@@ -171,6 +178,7 @@ def currentInput (form : FormState) : TextInput :=
   | .description => form.description
   | .priority => TextInput.clear  -- Priority isn't text input
   | .labels => form.labels
+  | .assignee => form.assignee
 
 /-- Update current text input -/
 def updateCurrentInput (form : FormState) (input : TextInput) : FormState :=
@@ -179,6 +187,7 @@ def updateCurrentInput (form : FormState) (input : TextInput) : FormState :=
   | .description => { form with description := input }
   | .priority => form  -- Priority isn't text input
   | .labels => { form with labels := input }
+  | .assignee => { form with assignee := input }
 
 /-- Parse labels from comma-separated string -/
 def getLabels (form : FormState) : Array String :=
@@ -186,6 +195,11 @@ def getLabels (form : FormState) : Array String :=
     |>.map String.trim
     |>.filter (· != "")
     |>.toArray
+
+/-- Get assignee (None if empty) -/
+def getAssignee (form : FormState) : Option String :=
+  let trimmed := form.assignee.text.trim
+  if trimmed.isEmpty then none else some trimmed
 
 /-- Check if form is valid for submission -/
 def isValid (form : FormState) : Bool :=
