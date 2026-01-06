@@ -20,7 +20,7 @@ inductive Result where
 
 /-- Get output mode from parse result -/
 def getMode (result : ParseResult) : Mode :=
-  if result.getBool "text" then .text else .json
+  if result.getBool "json" then .json else .text
 
 /-- Find config by walking up directory tree -/
 def findConfig : IO (Option Storage.Config) := do
@@ -81,8 +81,9 @@ def handleList (result : ParseResult) (mode : Mode) : IO Result := do
       includeAll := result.getBool "all"
     }
     try
+      let allIssues ← Storage.loadAllIssues config
       let issues ← Storage.listIssues config filter
-      return .success (formatIssueList issues mode)
+      return .success (formatIssueList issues allIssues mode)
     catch e =>
       return .error (formatError s!"Failed to list issues: {e}" mode)
 

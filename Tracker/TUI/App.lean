@@ -75,6 +75,37 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
       errorMessage := ""
     }.clampSelection
 
+  | .createIssue title description priority labels =>
+    let issue ← Storage.createIssue state.config title description priority labels
+    let issues ← Storage.loadAllIssues state.config
+    return { state with
+      issues
+      viewMode := .detail
+      currentIssue := some issue
+      statusMessage := s!"Created issue #{issue.id}"
+      errorMessage := ""
+    }.clampSelection
+
+  | .updateIssue id title description priority labels =>
+    let result ← Storage.updateIssue state.config id fun issue =>
+      { issue with
+        title
+        description
+        priority
+        labels }
+    match result with
+    | some updatedIssue =>
+      let issues ← Storage.loadAllIssues state.config
+      return { state with
+        issues
+        viewMode := .detail
+        currentIssue := some updatedIssue
+        statusMessage := s!"Updated issue #{id}"
+        errorMessage := ""
+      }.clampSelection
+    | none =>
+      return { state with errorMessage := s!"Issue #{id} not found" }
+
 /-- Custom tick function that handles pending actions -/
 def tick (term : Terminal) (state : AppState) : IO (Terminal × AppState × Bool) := do
   -- Poll for input

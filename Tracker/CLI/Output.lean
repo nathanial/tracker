@@ -2,6 +2,7 @@
   Output formatting for CLI commands (JSON and text).
 -/
 import Tracker.Core.Types
+import Tracker.Core.Storage
 
 namespace Tracker.CLI.Output
 
@@ -41,7 +42,7 @@ Updated: {issue.updated}
 {issue.description}{progressStr}"
 
 /-- Format an issue list for output -/
-def formatIssueList (issues : Array Issue) (mode : Mode) : String :=
+def formatIssueList (issues : Array Issue) (allIssues : Array Issue) (mode : Mode) : String :=
   match mode with
   | .json =>
     let items := issues.map (·.toCompactJson) |>.toList |> String.intercalate ",\n  "
@@ -51,7 +52,7 @@ def formatIssueList (issues : Array Issue) (mode : Mode) : String :=
     else
       let header := s!"Found {issues.size} issue(s):\n"
       let rows := issues.map fun issue =>
-        let blockedStr := if issue.isBlocked then "[B]" else "   "
+        let blockedStr := if Storage.isEffectivelyBlocked issue allIssues then "[B]" else "   "
         let priorityStr := match issue.priority with
           | .critical => "CRIT"
           | .high => "HIGH"

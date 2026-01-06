@@ -2,6 +2,7 @@
   TUI rendering.
 -/
 import Tracker.Core.Types
+import Tracker.Core.Storage
 import Tracker.TUI.State
 import Terminus
 
@@ -56,7 +57,7 @@ def drawList (buf : Buffer) (state : AppState) (startX startY : Nat) (width heig
       let isSelected := idx == state.selectedIndex
 
       -- Build row content
-      let blockedStr := if issue.isBlocked then "[B]" else "   "
+      let blockedStr := if Storage.isEffectivelyBlocked issue state.issues then "[B]" else "   "
       let idStr := padLeft (toString issue.id) 4 ' '
       let priorityStr : String := match issue.priority with
         | Priority.critical => "CRIT"
@@ -160,14 +161,130 @@ def drawDetail (buf : Buffer) (state : AppState) (startX startY : Nat) (width he
 
   buf
 
+/-- Draw a text input field -/
+def drawTextInput (buf : Buffer) (input : TextInput) (startX startY : Nat) (width : Nat)
+    (focused : Bool) : Buffer := Id.run do
+  let mut buf := buf
+
+  -- Calculate visible portion of text
+  let maxWidth := if width > 2 then width - 2 else 1
+  let text := input.text.take maxWidth
+  let cursor := min input.cursor maxWidth
+
+  -- Draw text
+  let textStyle := if focused then
+    Style.default.withFg (.ansi .white)
+  else
+    Style.default.withFg (.ansi .brightBlack)
+  buf := buf.writeString startX startY text textStyle
+
+  -- Draw cursor if focused
+  if focused then
+    let cursorX := startX + cursor
+    let cursorChar := if cursor < text.length then
+      text.get ⟨cursor⟩
+    else
+      ' '
+    let cursorStyle := Style.default.withBg (.ansi .white) |>.withFg (.ansi .black)
+    buf := buf.writeString cursorX startY cursorChar.toString cursorStyle
+
+  buf
+
+/-- Draw a form field with label -/
+def drawFormField (buf : Buffer) (label : String) (input : TextInput) (startX startY : Nat)
+    (width : Nat) (focused : Bool) : Buffer := Id.run do
+  let mut buf := buf
+
+  -- Draw label
+  let labelStyle := if focused then
+    Style.bold.withFg (.ansi .cyan)
+  else
+    Style.default.withFg (.ansi .white)
+  buf := buf.writeString startX startY s!"{label}:" labelStyle
+
+  -- Draw input on next line
+  let inputX := startX + 2
+  let inputWidth := if width > inputX - startX + 2 then width - (inputX - startX) - 2 else 10
+  buf := drawTextInput buf input inputX (startY + 1) inputWidth focused
+
+  buf
+
+/-- Draw priority selector -/
+def drawPrioritySelector (buf : Buffer) (priority : Priority) (startX startY : Nat)
+    (focused : Bool) : Buffer := Id.run do
+  let mut buf := buf
+
+  -- Draw label
+  let labelStyle := if focused then
+    Style.bold.withFg (.ansi .cyan)
+  else
+    Style.default.withFg (.ansi .white)
+  buf := buf.writeString startX startY "Priority:" labelStyle
+
+  -- Draw priority options
+  let priorities : List (Priority × String) := [
+    (.low, "Low"), (.medium, "Medium"), (.high, "High"), (.critical, "Critical")
+  ]
+  let mut x := startX + 2
+  let y := startY + 1
+  for (p, name) in priorities do
+    let style := if p == priority then
+      if focused then
+        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
+      else
+        Style.default.withBg (.ansi .brightBlack) |>.withFg (.ansi .white)
+    else
+      Style.default.withFg (.ansi .brightBlack)
+    let label := s!" {name} "
+    buf := buf.writeString x y label style
+    x := x + label.length + 1
+
+  -- Draw hint if focused
+  if focused then
+    buf := buf.writeString x y "  ←/→ to change" (Style.default.withFg (.ansi .brightBlack))
+
+  buf
+
+/-- Draw the create/edit form -/
+def drawForm (buf : Buffer) (state : AppState) (startX startY : Nat) (width height : Nat) : Buffer := Id.run do
+  let mut buf := buf
+  let form := state.formState
+
+  -- Draw form title
+  let title := if form.editingIssueId.isSome then "Edit Issue" else "New Issue"
+  buf := buf.writeString startX startY title Style.bold
+  let mut y := startY + 2
+
+  -- Title field
+  buf := drawFormField buf "Title" form.title startX y width (form.focusedField == .title)
+  y := y + 3
+
+  -- Description field
+  buf := drawFormField buf "Description" form.description startX y width (form.focusedField == .description)
+  y := y + 3
+
+  -- Priority selector
+  buf := drawPrioritySelector buf form.priority startX y (form.focusedField == .priority)
+  y := y + 3
+
+  -- Labels field
+  buf := drawFormField buf "Labels (comma-separated)" form.labels startX y width (form.focusedField == .labels)
+  y := y + 3
+
+  -- Validation message
+  if !form.isValid then
+    buf := buf.writeString startX y "Title is required" (Style.default.withFg (.ansi .red))
+
+  buf
+
 /-- Draw the footer/help bar -/
 def drawFooter (buf : Buffer) (state : AppState) (startX startY : Nat) (width : Nat) : Buffer := Id.run do
   let mut buf := buf
 
   let help : String := match state.viewMode with
-    | ViewMode.list => "[up/down] Navigate  [Tab] Switch Tab  [Enter] View  [q] Quit"
-    | ViewMode.detail => "[Esc] Back  [c] Close  [r] Reopen  [q] Quit"
-    | ViewMode.create | ViewMode.edit => "[Esc] Cancel  [Enter] Save"
+    | ViewMode.list => "[↑/↓] Navigate  [Tab] Switch Tab  [Enter] View  [n] New  [q] Quit"
+    | ViewMode.detail => "[Esc] Back  [e] Edit  [c] Close  [r] Reopen  [q] Quit"
+    | ViewMode.create | ViewMode.edit => "[Tab] Next Field  [Shift+Tab] Prev  [Ctrl+S] Save  [Esc] Cancel"
 
   buf := buf.writeString startX startY help (Style.default.withFg (.ansi .brightBlack))
 
@@ -205,7 +322,7 @@ def draw (frame : Frame) (state : AppState) : Frame := Id.run do
   buf := match state.viewMode with
     | ViewMode.list => drawList buf state contentX contentY contentWidth contentHeight
     | ViewMode.detail => drawDetail buf state contentX contentY contentWidth contentHeight
-    | ViewMode.create | ViewMode.edit => buf  -- TODO: form rendering
+    | ViewMode.create | ViewMode.edit => drawForm buf state contentX contentY contentWidth contentHeight
 
   -- Footer (1 line)
   let footerY := areaY + areaHeight - 1

@@ -250,4 +250,11 @@ def deleteIssue (config : Config) (id : Nat) : IO Bool := do
   | none =>
     return false
 
+/-- Check if an issue is effectively blocked (any blocker is still open) -/
+def isEffectivelyBlocked (issue : Issue) (allIssues : Array Issue) : Bool :=
+  issue.blockedBy.any fun blockerId =>
+    match allIssues.find? (·.id == blockerId) with
+    | some blocker => blocker.status != .closed
+    | none => false  -- Blocker doesn't exist, not blocking
+
 end Tracker.Storage

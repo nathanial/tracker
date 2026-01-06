@@ -13,7 +13,7 @@ def trackerCommand : Command := command "tracker" do
   Cmd.description "Local issue tracker for Claude Code"
 
   -- Global flags
-  Cmd.boolFlag "text" (short := some 't') (description := "Output in human-readable text format (default is JSON)")
+  Cmd.boolFlag "json" (short := some 'j') (description := "Output in JSON format (default is text)")
 
   -- init subcommand
   Cmd.subcommand "init" do
