@@ -67,7 +67,7 @@ def formatIssueList (issues : Array Issue) (allIssues : Array Issue) (mode : Mod
         let projectStr := match issue.project with
           | some p => s!" [{p}]"
           | none => ""
-        s!"{blockedStr} #{padLeft (toString issue.id) 4 ' '} [{priorityStr}] [{statusStr}] {issue.title.take 40}{labelsStr}{projectStr}"
+        s!"{blockedStr} #{padLeft (toString issue.id) 4 ' '} [{priorityStr}] [{statusStr}]{projectStr} {issue.title.take 40}{labelsStr}"
       header ++ String.intercalate "\n" rows.toList
 
 /-- Format a success message -/
