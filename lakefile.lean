@@ -8,9 +8,9 @@ package tracker where
   ]
   precompileModules := true
 
-require terminus from git "https://github.com/nathanial/terminus" @ "v0.0.1"
-require parlance from git "https://github.com/nathanial/parlance" @ "v0.0.1"
-require chronos from git "https://github.com/nathanial/chronos-lean" @ "v0.0.1"
+require terminus from "../../graphics/terminus"
+require parlance from "../../util/parlance"
+require chronos from "../../util/chronos"
 
 @[default_target]
 lean_lib Tracker where

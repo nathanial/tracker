@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Building tracker..."
 cd "$SCRIPT_DIR"
-lake build
+lake build tracker
 
 echo "Installing to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
