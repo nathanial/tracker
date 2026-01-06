@@ -47,6 +47,8 @@ def trackerCommand : Command := command "tracker" do
       (description := "Filter by label")
     Cmd.flag "assignee" (short := some 'a')
       (description := "Filter by assignee")
+    Cmd.flag "project" (short := some 'p')
+      (description := "Filter by project")
     Cmd.boolFlag "blocked" (description := "Show only blocked issues")
 
   -- show subcommand

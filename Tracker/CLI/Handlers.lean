@@ -78,6 +78,7 @@ def handleList (result : ParseResult) (mode : Mode) : IO Result := do
       status := result.get (α := String) "status" >>= Status.fromString?
       label := result.get (α := String) "label"
       assignee := result.get (α := String) "assignee"
+      project := result.get (α := String) "project"
       blockedOnly := result.getBool "blocked"
       includeAll := result.getBool "all"
     }

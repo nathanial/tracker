@@ -217,6 +217,7 @@ structure ListFilter where
   status : Option Status := none
   label : Option String := none
   assignee : Option String := none
+  project : Option String := none
   blockedOnly : Bool := false
   includeAll : Bool := false  -- Include closed issues
   deriving Repr, Inhabited
@@ -237,9 +238,13 @@ def listIssues (config : Config) (filter : ListFilter := {}) : IO (Array Issue) 
     let assigneeOk := match filter.assignee with
       | some a => issue.assignee == some a
       | none => true
+    -- Project filter
+    let projectOk := match filter.project with
+      | some p => issue.project == some p
+      | none => true
     -- Blocked filter
     let blockedOk := !filter.blockedOnly || issue.isBlocked
-    statusOk && labelOk && assigneeOk && blockedOk
+    statusOk && labelOk && assigneeOk && projectOk && blockedOk
   return filtered
 
 /-- Delete an issue (removes the file) -/
