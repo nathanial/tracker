@@ -11,8 +11,19 @@ Issues are stored as markdown files in your repo - human-readable, git-diffable,
 Requires [Lean 4](https://lean-lang.org/) and [Lake](https://github.com/leanprover/lake).
 
 ```bash
-lake build
+git clone https://github.com/nathanial/tracker.git
+cd tracker
+./install.sh
 ```
+
+This builds the project and installs the `tracker` binary to `~/.local/bin/`.
+
+To install to a different location:
+```bash
+INSTALL_DIR=/usr/local/bin ./install.sh
+```
+
+Make sure the install directory is in your `PATH`.
 
 ## Quick Start
 
