@@ -3,15 +3,42 @@
 -/
 import Tracker.Core.Types
 import Tracker.Core.Storage
+import Terminus
 
 namespace Tracker.TUI
 
 open Tracker
+open Terminus
+
+/-- Tree view organization mode -/
+inductive TreeViewMode where
+  | byProject       -- Projects as branches, issues as leaves
+  | byStatus        -- Status as branches, issues as leaves
+  | byProjectStatus -- Projects → Status → Issues (3-level)
+  deriving BEq, Inhabited
+
+namespace TreeViewMode
+
+def next : TreeViewMode → TreeViewMode
+  | .byProject => .byStatus
+  | .byStatus => .byProjectStatus
+  | .byProjectStatus => .byProject
+
+def prev : TreeViewMode → TreeViewMode
+  | .byProject => .byProjectStatus
+  | .byStatus => .byProject
+  | .byProjectStatus => .byStatus
+
+def toString : TreeViewMode → String
+  | .byProject => "By Project"
+  | .byStatus => "By Status"
+  | .byProjectStatus => "By Project+Status"
+
+end TreeViewMode
 
 /-- Current view mode -/
 inductive ViewMode where
-  | projectList -- Project selection list
-  | list        -- Issue list (filtered by selected project)
+  | tree        -- Main tree view with tabs
   | detail      -- Single issue detail
   | create      -- Create new issue form
   | edit        -- Edit issue form
@@ -222,59 +249,6 @@ def isValid (form : FormState) : Bool :=
 
 end FormState
 
-/-- Filter tab in list view -/
-inductive FilterTab where
-  | open_
-  | inProgress
-  | closed
-  | all
-  deriving BEq, Inhabited
-
-namespace FilterTab
-
-def next : FilterTab → FilterTab
-  | .open_ => .inProgress
-  | .inProgress => .closed
-  | .closed => .all
-  | .all => .open_
-
-def prev : FilterTab → FilterTab
-  | .open_ => .all
-  | .inProgress => .open_
-  | .closed => .inProgress
-  | .all => .closed
-
-def toString : FilterTab → String
-  | .open_ => "Open"
-  | .inProgress => "In Progress"
-  | .closed => "Closed"
-  | .all => "All"
-
-end FilterTab
-
-/-- Project filter for two-level navigation -/
-inductive ProjectFilter where
-  | all                     -- Show all issues regardless of project
-  | noProject               -- Show only issues with no project assigned
-  | project (name : String) -- Show issues for specific project
-  deriving Inhabited
-
-namespace ProjectFilter
-
-instance : BEq ProjectFilter where
-  beq
-    | .all, .all => true
-    | .noProject, .noProject => true
-    | .project a, .project b => a == b
-    | _, _ => false
-
-def toString : ProjectFilter → String
-  | .all => "All Issues"
-  | .noProject => "No Project"
-  | .project name => name
-
-end ProjectFilter
-
 /-- TUI application state -/
 structure AppState where
   /-- Storage config -/
@@ -282,11 +256,13 @@ structure AppState where
   /-- All loaded issues -/
   issues : Array Issue
   /-- Current view -/
-  viewMode : ViewMode := .projectList
-  /-- Current filter tab -/
-  filterTab : FilterTab := .open_
-  /-- Selected index in list view -/
-  selectedIndex : Nat := 0
+  viewMode : ViewMode := .tree
+  /-- Tree view organization mode -/
+  treeViewMode : TreeViewMode := .byProject
+  /-- The tree widget state -/
+  issueTree : Tree := {}
+  /-- Whether to show closed issues in the tree -/
+  showClosed : Bool := false
   /-- Currently viewed issue (for detail view) -/
   currentIssue : Option Issue := none
   /-- Form state for create/edit views -/
@@ -295,67 +271,178 @@ structure AppState where
   statusMessage : String := ""
   /-- Error message -/
   errorMessage : String := ""
-  /-- Current project filter for two-level navigation -/
-  projectFilter : ProjectFilter := .all
-  /-- Selected index in project list view -/
-  projectSelectedIndex : Nat := 0
   deriving Inhabited
 
 namespace AppState
 
-/-- Get filtered issues based on project filter AND status tab -/
-def filteredIssues (state : AppState) : Array Issue :=
-  state.issues.filter fun issue =>
-    -- First filter by project
-    let projectMatch := match state.projectFilter with
-      | .all => true
-      | .noProject => issue.project.isNone
-      | .project name => issue.project == some name
-    -- Then filter by status tab
-    let statusMatch := match state.filterTab with
-      | .open_ => issue.status == .open_
-      | .inProgress => issue.status == .inProgress
-      | .closed => issue.status == .closed
-      | .all => true
-    projectMatch && statusMatch
+/-- Helper: Format priority as short string -/
+private def priorityShort : Priority → String
+  | .low => "LOW"
+  | .medium => "MED"
+  | .high => "HIGH"
+  | .critical => "CRIT"
 
-/-- Ensure selected index is valid -/
-def clampSelection (state : AppState) : AppState :=
-  let filtered := state.filteredIssues
-  let maxIdx := if filtered.isEmpty then 0 else filtered.size - 1
-  { state with selectedIndex := min state.selectedIndex maxIdx }
+/-- Helper: Format status icon -/
+private def statusIcon : Status → String
+  | .open_ => " "
+  | .inProgress => ">"
+  | .closed => "x"
 
-/-- Get the currently selected issue -/
+/-- Helper: Create a tree leaf for an issue -/
+private def issueToLeaf (issue : Issue) : TreeNode :=
+  let icon := statusIcon issue.status
+  let prio := priorityShort issue.priority
+  TreeNode.leaf s!"[{icon}] #{issue.id} [{prio}] {issue.title}" (some (toString issue.id))
+
+/-- Build tree organized by project -/
+def buildByProjectTree (issues : Array Issue) (showClosed : Bool) : List TreeNode := Id.run do
+  let filtered := if showClosed then issues
+                  else issues.filter (·.status != .closed)
+
+  -- Group issues by project
+  let mut projectMap : List (String × Array Issue) := []
+  for issue in filtered do
+    let key := issue.project.getD "No Project"
+    match projectMap.find? (·.1 == key) with
+    | some (_, arr) =>
+      projectMap := projectMap.map fun (k, v) =>
+        if k == key then (k, v.push issue) else (k, v)
+    | none =>
+      projectMap := projectMap ++ [(key, #[issue])]
+
+  -- Sort by project name
+  let sorted := projectMap.toArray.qsort (·.1 < ·.1)
+
+  -- Convert to TreeNodes
+  let mut nodes : List TreeNode := []
+  for (project, projectIssues) in sorted do
+    let leaves := projectIssues.toList.map issueToLeaf
+    nodes := nodes ++ [TreeNode.branch s!"{project} ({projectIssues.size})" leaves false]
+  nodes
+
+/-- Build tree organized by status -/
+def buildByStatusTree (issues : Array Issue) (showClosed : Bool) : List TreeNode := Id.run do
+  let filtered := if showClosed then issues
+                  else issues.filter (·.status != .closed)
+
+  -- Group by status
+  let openIssues := filtered.filter (·.status == .open_)
+  let inProgressIssues := filtered.filter (·.status == .inProgress)
+  let closedIssues := if showClosed then filtered.filter (·.status == .closed) else #[]
+
+  let mut nodes : List TreeNode := []
+
+  if !openIssues.isEmpty then
+    let leaves := openIssues.toList.map issueToLeaf
+    nodes := nodes ++ [TreeNode.branch s!"Open ({openIssues.size})" leaves false]
+
+  if !inProgressIssues.isEmpty then
+    let leaves := inProgressIssues.toList.map issueToLeaf
+    nodes := nodes ++ [TreeNode.branch s!"In Progress ({inProgressIssues.size})" leaves false]
+
+  if showClosed && !closedIssues.isEmpty then
+    let leaves := closedIssues.toList.map issueToLeaf
+    nodes := nodes ++ [TreeNode.branch s!"Closed ({closedIssues.size})" leaves false]
+
+  nodes
+
+/-- Build tree organized by project then status -/
+def buildByProjectStatusTree (issues : Array Issue) (showClosed : Bool) : List TreeNode := Id.run do
+  let filtered := if showClosed then issues
+                  else issues.filter (·.status != .closed)
+
+  -- Group issues by project
+  let mut projectMap : List (String × Array Issue) := []
+  for issue in filtered do
+    let key := issue.project.getD "No Project"
+    match projectMap.find? (·.1 == key) with
+    | some (_, arr) =>
+      projectMap := projectMap.map fun (k, v) =>
+        if k == key then (k, v.push issue) else (k, v)
+    | none =>
+      projectMap := projectMap ++ [(key, #[issue])]
+
+  -- Sort by project name
+  let sorted := projectMap.toArray.qsort (·.1 < ·.1)
+
+  -- Convert to TreeNodes with status sub-branches
+  let mut nodes : List TreeNode := []
+  for (project, projectIssues) in sorted do
+    let openIssues := projectIssues.filter (·.status == .open_)
+    let inProgressIssues := projectIssues.filter (·.status == .inProgress)
+    let closedIssues := if showClosed then projectIssues.filter (·.status == .closed) else #[]
+
+    let mut statusBranches : List TreeNode := []
+    if !openIssues.isEmpty then
+      let leaves := openIssues.toList.map issueToLeaf
+      statusBranches := statusBranches ++ [TreeNode.branch s!"Open ({openIssues.size})" leaves false]
+    if !inProgressIssues.isEmpty then
+      let leaves := inProgressIssues.toList.map issueToLeaf
+      statusBranches := statusBranches ++ [TreeNode.branch s!"In Progress ({inProgressIssues.size})" leaves false]
+    if showClosed && !closedIssues.isEmpty then
+      let leaves := closedIssues.toList.map issueToLeaf
+      statusBranches := statusBranches ++ [TreeNode.branch s!"Closed ({closedIssues.size})" leaves false]
+
+    if !statusBranches.isEmpty then
+      nodes := nodes ++ [TreeNode.branch s!"{project} ({projectIssues.size})" statusBranches false]
+  nodes
+
+/-- Build tree based on current view mode -/
+def buildTree (state : AppState) : List TreeNode :=
+  match state.treeViewMode with
+  | .byProject => buildByProjectTree state.issues state.showClosed
+  | .byStatus => buildByStatusTree state.issues state.showClosed
+  | .byProjectStatus => buildByProjectStatusTree state.issues state.showClosed
+
+/-- Rebuild the tree (call after issues change or view mode changes) -/
+def rebuildTree (state : AppState) : AppState :=
+  let nodes := buildTree state
+  { state with issueTree := Tree.new nodes }
+
+/-- Parse issue ID from tree leaf data -/
+private def parseIssueId (data : Option String) : Option Nat :=
+  data.bind (·.toNat?)
+
+/-- Get the selected issue from the tree (if a leaf is selected) -/
 def selectedIssue (state : AppState) : Option Issue :=
-  let filtered := state.filteredIssues
-  if h : state.selectedIndex < filtered.size then
-    some filtered[state.selectedIndex]
-  else none
+  match state.issueTree.getSelected with
+  | none => none
+  | some line =>
+    if line.isLeaf then
+      -- The leaf label contains the issue ID after '#'
+      -- Format: "[x] #123 [PRIO] Title"
+      let parts := line.label.splitOn "#"
+      if parts.length >= 2 then
+        let idPart := parts[1]!.takeWhile (·.isDigit)
+        match idPart.toNat? with
+        | some id => state.issues.find? (·.id == id)
+        | none => none
+      else none
+    else none
 
-/-- Move selection up -/
+/-- Move tree selection up -/
 def moveUp (state : AppState) : AppState :=
-  if state.selectedIndex > 0 then
-    { state with selectedIndex := state.selectedIndex - 1 }
-  else state
+  { state with issueTree := state.issueTree.selectPrev }
 
-/-- Move selection down -/
+/-- Move tree selection down -/
 def moveDown (state : AppState) : AppState :=
-  let maxIdx := state.filteredIssues.size
-  if state.selectedIndex + 1 < maxIdx then
-    { state with selectedIndex := state.selectedIndex + 1 }
-  else state
+  { state with issueTree := state.issueTree.selectNext }
 
-/-- Switch to next tab -/
-def nextTab (state : AppState) : AppState :=
-  { state with
-    filterTab := state.filterTab.next
-    selectedIndex := 0 }.clampSelection
+/-- Toggle expand/collapse at current tree selection -/
+def toggleTreeNode (state : AppState) : AppState :=
+  { state with issueTree := state.issueTree.toggleSelected }
 
-/-- Switch to previous tab -/
-def prevTab (state : AppState) : AppState :=
-  { state with
-    filterTab := state.filterTab.prev
-    selectedIndex := 0 }.clampSelection
+/-- Switch to next tree view mode -/
+def nextTreeViewMode (state : AppState) : AppState :=
+  { state with treeViewMode := state.treeViewMode.next }.rebuildTree
+
+/-- Switch to previous tree view mode -/
+def prevTreeViewMode (state : AppState) : AppState :=
+  { state with treeViewMode := state.treeViewMode.prev }.rebuildTree
+
+/-- Toggle showing closed issues -/
+def toggleShowClosed (state : AppState) : AppState :=
+  { state with showClosed := !state.showClosed }.rebuildTree
 
 /-- Enter detail view for selected issue -/
 def enterDetail (state : AppState) : AppState :=
@@ -366,71 +453,11 @@ def enterDetail (state : AppState) : AppState :=
       currentIssue := some issue }
   | none => state
 
-/-- Return to list view -/
-def returnToList (state : AppState) : AppState :=
+/-- Return to tree view -/
+def returnToTree (state : AppState) : AppState :=
   { state with
-    viewMode := .list
+    viewMode := .tree
     currentIssue := none }
-
-/-- Extract unique project names from all issues -/
-def projects (state : AppState) : Array String :=
-  state.issues
-    |>.filterMap (·.project)
-    |>.toList
-    |>.eraseDups
-    |>.toArray
-    |>.qsort (· < ·)
-
-/-- Get project list items for display (includes "All" and "No Project") -/
-def projectListItems (state : AppState) : Array ProjectFilter :=
-  let projectFilters := state.projects.map ProjectFilter.project
-  #[.all, .noProject] ++ projectFilters
-
-/-- Count issues per project filter -/
-def issueCountForProject (state : AppState) (filter : ProjectFilter) : Nat :=
-  state.issues.filter (fun issue =>
-    match filter with
-    | .all => true
-    | .noProject => issue.project.isNone
-    | .project name => issue.project == some name
-  ) |>.size
-
-/-- Move project selection up -/
-def moveProjectUp (state : AppState) : AppState :=
-  if state.projectSelectedIndex > 0 then
-    { state with projectSelectedIndex := state.projectSelectedIndex - 1 }
-  else state
-
-/-- Move project selection down -/
-def moveProjectDown (state : AppState) : AppState :=
-  let maxIdx := state.projectListItems.size
-  if state.projectSelectedIndex + 1 < maxIdx then
-    { state with projectSelectedIndex := state.projectSelectedIndex + 1 }
-  else state
-
-/-- Get currently selected project filter -/
-def selectedProjectFilter (state : AppState) : Option ProjectFilter :=
-  let items := state.projectListItems
-  if h : state.projectSelectedIndex < items.size then
-    some items[state.projectSelectedIndex]
-  else none
-
-/-- Enter issue list for selected project -/
-def enterProjectIssues (state : AppState) : AppState :=
-  match state.selectedProjectFilter with
-  | some filter =>
-    { state with
-      viewMode := .list
-      projectFilter := filter
-      selectedIndex := 0
-      filterTab := .open_ }.clampSelection
-  | none => state
-
-/-- Return to project list from issue list -/
-def returnToProjectList (state : AppState) : AppState :=
-  { state with
-    viewMode := .projectList
-    selectedIndex := 0 }
 
 /-- Set status message -/
 def setStatus (state : AppState) (msg : String) : AppState :=
@@ -444,11 +471,19 @@ def setError (state : AppState) (msg : String) : AppState :=
 def clearMessages (state : AppState) : AppState :=
   { state with statusMessage := "", errorMessage := "" }
 
-/-- Enter create mode with optional project pre-fill -/
+/-- Enter create mode -/
 def enterCreate (state : AppState) : AppState :=
-  let projectText := match state.projectFilter with
-    | .project name => name
-    | _ => ""
+  -- Try to pre-fill project from selected branch
+  let projectText := match state.issueTree.getSelected with
+    | some line =>
+      if !line.isLeaf && line.depth == 0 then
+        -- Top-level branch might be a project name
+        let label := line.label
+        -- Remove count suffix like " (3)"
+        let parts := label.splitOn " ("
+        if parts.length >= 1 then parts[0]! else ""
+      else ""
+    | none => ""
   { state with
     viewMode := .create
     formState := { FormState.empty with
@@ -470,8 +505,8 @@ def cancelForm (state : AppState) : AppState :=
     -- Was editing, return to detail view
     { state with viewMode := .detail }
   | none =>
-    -- Was creating, return to list view
-    { state with viewMode := .list }
+    -- Was creating, return to tree view
+    { state with viewMode := .tree }
 
 /-- Update form state -/
 def updateForm (state : AppState) (f : FormState → FormState) : AppState :=

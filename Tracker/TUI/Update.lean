@@ -28,71 +28,58 @@ structure UpdateResult where
   pendingAction : PendingAction := .none
   deriving Inhabited
 
-/-- Handle input in project list view -/
-def updateProjectListView (state : AppState) (key : KeyEvent) : UpdateResult :=
+/-- Handle input in tree view -/
+def updateTreeView (state : AppState) (key : KeyEvent) : UpdateResult :=
   match key.code with
-  -- Navigation
-  | .up | .char 'k' | .char 'K' =>
-    { state := state.moveProjectUp, shouldQuit := false, pendingAction := .none }
-  | .down | .char 'j' | .char 'J' =>
-    { state := state.moveProjectDown, shouldQuit := false, pendingAction := .none }
-  -- Enter project issues
-  | .enter =>
-    { state := state.enterProjectIssues, shouldQuit := false, pendingAction := .none }
-  -- Create new issue
-  | .char 'n' | .char 'N' =>
-    { state := state.enterCreate, shouldQuit := false, pendingAction := .none }
-  -- Refresh
-  | .char 'r' | .char 'R' =>
-    { state := state.setStatus "Refreshing..."
-      shouldQuit := false
-      pendingAction := .refreshIssues }
-  | _ => { state := state, shouldQuit := false, pendingAction := .none }
-
-/-- Handle input in list view -/
-def updateListView (state : AppState) (key : KeyEvent) : UpdateResult :=
-  match key.code with
-  -- Navigation
+  -- Navigation up/down
   | .up | .char 'k' | .char 'K' =>
     { state := state.moveUp, shouldQuit := false, pendingAction := .none }
   | .down | .char 'j' | .char 'J' =>
     { state := state.moveDown, shouldQuit := false, pendingAction := .none }
-  -- Tab switching (Shift+Tab for previous)
+  -- Tab switching between tree view modes
   | .tab =>
     if key.modifiers.shift then
-      { state := state.prevTab, shouldQuit := false, pendingAction := .none }
+      { state := state.prevTreeViewMode, shouldQuit := false, pendingAction := .none }
     else
-      { state := state.nextTab, shouldQuit := false, pendingAction := .none }
-  -- Back to project list
-  | .escape =>
-    { state := state.returnToProjectList, shouldQuit := false, pendingAction := .none }
-  -- Enter detail view
-  | .enter =>
-    { state := state.enterDetail, shouldQuit := false, pendingAction := .none }
+      { state := state.nextTreeViewMode, shouldQuit := false, pendingAction := .none }
+  -- Enter: toggle expand/collapse for branch, or enter detail for leaf
+  | .enter | .char ' ' =>
+    match state.issueTree.getSelected with
+    | some line =>
+      if line.isLeaf then
+        -- Enter detail view for selected issue
+        { state := state.enterDetail, shouldQuit := false, pendingAction := .none }
+      else
+        -- Toggle expand/collapse
+        { state := state.toggleTreeNode, shouldQuit := false, pendingAction := .none }
+    | none =>
+      { state := state, shouldQuit := false, pendingAction := .none }
+  -- Left arrow: collapse current branch
+  | .left =>
+    match state.issueTree.getSelected with
+    | some line =>
+      if !line.isLeaf && line.isExpanded then
+        { state := state.toggleTreeNode, shouldQuit := false, pendingAction := .none }
+      else
+        { state := state, shouldQuit := false, pendingAction := .none }
+    | none =>
+      { state := state, shouldQuit := false, pendingAction := .none }
+  -- Right arrow: expand current branch
+  | .right =>
+    match state.issueTree.getSelected with
+    | some line =>
+      if !line.isLeaf && !line.isExpanded then
+        { state := state.toggleTreeNode, shouldQuit := false, pendingAction := .none }
+      else
+        { state := state, shouldQuit := false, pendingAction := .none }
+    | none =>
+      { state := state, shouldQuit := false, pendingAction := .none }
+  -- Toggle showing closed issues
+  | .char 'c' | .char 'C' =>
+    { state := state.toggleShowClosed, shouldQuit := false, pendingAction := .none }
   -- Create new issue
   | .char 'n' | .char 'N' =>
     { state := state.enterCreate, shouldQuit := false, pendingAction := .none }
-  -- Quick actions on selected issue
-  | .char 'c' | .char 'C' =>
-    match state.selectedIssue with
-    | some issue =>
-      if issue.status != .closed then
-        { state := state.setStatus "Closing..."
-          shouldQuit := false
-          pendingAction := .closeIssue issue.id }
-      else
-        { state := state.setError "Issue already closed", shouldQuit := false, pendingAction := .none }
-    | none => { state := state, shouldQuit := false, pendingAction := .none }
-  | .char 'o' | .char 'O' =>
-    match state.selectedIssue with
-    | some issue =>
-      if issue.status == .closed then
-        { state := state.setStatus "Reopening..."
-          shouldQuit := false
-          pendingAction := .reopenIssue issue.id }
-      else
-        { state := state.setError "Issue is not closed", shouldQuit := false, pendingAction := .none }
-    | none => { state := state, shouldQuit := false, pendingAction := .none }
   -- Refresh
   | .char 'r' | .char 'R' =>
     { state := state.setStatus "Refreshing..."
@@ -103,9 +90,9 @@ def updateListView (state : AppState) (key : KeyEvent) : UpdateResult :=
 /-- Handle input in detail view -/
 def updateDetailView (state : AppState) (key : KeyEvent) : UpdateResult :=
   match key.code with
-  -- Back to list
+  -- Back to tree
   | .escape =>
-    { state := state.returnToList, shouldQuit := false, pendingAction := .none }
+    { state := state.returnToTree, shouldQuit := false, pendingAction := .none }
   -- Edit issue
   | .char 'e' | .char 'E' =>
     { state := state.enterEdit, shouldQuit := false, pendingAction := .none }
@@ -224,8 +211,7 @@ def update (state : AppState) (event : Option Event) : UpdateResult :=
         { state := state, shouldQuit := true, pendingAction := .none }
     else
       match state.viewMode with
-      | .projectList => updateProjectListView state k
-      | .list => updateListView state k
+      | .tree => updateTreeView state k
       | .detail => updateDetailView state k
       | .create | .edit => updateFormView state k
   | some (.resize _ _) =>

@@ -15,6 +15,10 @@ echo "Installing to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 cp .lake/build/bin/tracker "$INSTALL_DIR/tracker"
 chmod +x "$INSTALL_DIR/tracker"
+# Remove quarantine/provenance attributes
+xattr -cr "$INSTALL_DIR/tracker" 2>/dev/null || true
+# Re-sign the binary (required on macOS after copying)
+codesign -fs - "$INSTALL_DIR/tracker" 2>/dev/null || true
 
 echo ""
 echo "Installed tracker to $INSTALL_DIR/tracker"

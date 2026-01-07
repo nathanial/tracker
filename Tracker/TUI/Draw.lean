@@ -18,7 +18,7 @@ private def padLeft (s : String) (len : Nat) (c : Char) : String :=
     String.mk (List.replicate padding c) ++ s
   else s
 
-/-- Draw the header with project context and tabs -/
+/-- Draw the header with title -/
 def drawHeader (buf : Buffer) (state : AppState) (startX startY : Nat) (width : Nat) : Buffer := Id.run do
   let mut buf := buf
 
@@ -26,119 +26,56 @@ def drawHeader (buf : Buffer) (state : AppState) (startX startY : Nat) (width : 
   let title := " Tracker "
   buf := buf.writeString startX startY title (Style.bold.withFg (.ansi .cyan))
 
+  -- Show view info based on mode
   let mut x := startX + title.length
-
-  -- Show breadcrumb based on view mode
   match state.viewMode with
-  | .projectList =>
-    -- In project list, show "Projects"
-    buf := buf.writeString x startY " > Projects" (Style.default.withFg (.ansi .yellow))
-  | .list =>
-    -- In issue list, show project name and tabs
-    let projectName := state.projectFilter.toString
-    let breadcrumb := s!" > {projectName}"
-    buf := buf.writeString x startY breadcrumb (Style.default.withFg (.ansi .yellow))
-    x := x + breadcrumb.length + 2
-
-    -- Draw status filter tabs
-    let tabs : List FilterTab := [.open_, .inProgress, .closed, .all]
-    for tab in tabs do
-      let label := s!" {tab.toString} "
-      let style := if state.filterTab == tab then
-        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
-      else
-        Style.default.withFg (.ansi .white)
-      buf := buf.writeString x startY label style
-      x := x + label.length + 1
-  | _ =>
-    -- For detail/create/edit, show same as list view
-    let projectName := state.projectFilter.toString
-    buf := buf.writeString x startY s!" > {projectName}" (Style.default.withFg (.ansi .yellow))
+  | .tree =>
+    -- Show closed filter status
+    let closedStatus := if state.showClosed then "[showing closed]" else ""
+    if !closedStatus.isEmpty then
+      buf := buf.writeString x startY s!" {closedStatus}" (Style.default.withFg (.ansi .brightBlack))
+  | .detail =>
+    buf := buf.writeString x startY " > Detail" (Style.default.withFg (.ansi .yellow))
+  | .create =>
+    buf := buf.writeString x startY " > New Issue" (Style.default.withFg (.ansi .yellow))
+  | .edit =>
+    buf := buf.writeString x startY " > Edit Issue" (Style.default.withFg (.ansi .yellow))
 
   buf
 
-/-- Draw the issue list -/
-def drawList (buf : Buffer) (state : AppState) (startX startY : Nat) (width height : Nat) : Buffer := Id.run do
-  let mut buf := buf
-  let issues := state.filteredIssues
+/-- Draw the tab bar for tree view modes -/
+def drawTabs (frame : Frame) (state : AppState) (area : Rect) : Frame := Id.run do
+  let tabIdx := match state.treeViewMode with
+    | .byProject => 0
+    | .byStatus => 1
+    | .byProjectStatus => 2
 
-  if issues.isEmpty then
-    buf := buf.writeString (startX + 2) (startY + 1) "No issues found." Style.default
-    return buf
+  let tabs := Tabs.new ["By Project", "By Status", "By Project+Status"]
+    |>.withSelected tabIdx
+    |>.withSelectedStyle (Style.bold.withFg (.ansi .cyan))
+    |>.withNormalStyle (Style.default.withFg (.ansi .white))
+    |>.withDivider " │ "
 
-  let mut y := startY
-  let maxRows := height - 1
-  for idx in [:min issues.size maxRows] do
-    if h : idx < issues.size then
-      let issue := issues[idx]
-      let isSelected := idx == state.selectedIndex
+  frame.render tabs area
 
-      -- Build row content
-      let blockedStr := if Storage.isEffectivelyBlocked issue state.issues then "[B]" else "   "
-      let idStr := padLeft (toString issue.id) 4 ' '
-      let priorityStr : String := match issue.priority with
-        | Priority.critical => "CRIT"
-        | Priority.high => "HIGH"
-        | Priority.medium => "MED "
-        | Priority.low => "LOW "
-      let statusStr : String := match issue.status with
-        | Status.open_ => " "
-        | Status.inProgress => ">"
-        | Status.closed => "x"
-      let maxTitleLen := if width > 25 then width - 25 else 20
-      let title := issue.title.take maxTitleLen
-      let row := s!"{blockedStr} #{idStr} [{priorityStr}] [{statusStr}] {title}"
+/-- Draw the tree view -/
+def drawTreeView (frame : Frame) (state : AppState) (area : Rect) : Frame := Id.run do
+  if state.issueTree.nodes.isEmpty then
+    let emptyMsg := "No issues found. Press 'n' to create one."
+    let buf := frame.buffer.writeString (area.x + 2) (area.y + 1) emptyMsg Style.default
+    return { frame with buffer := buf }
 
-      -- Style based on selection and status
-      let style := if isSelected then
-        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
-      else if issue.status == Status.closed then
-        Style.default.withFg (.ansi .brightBlack)
-      else if issue.priority == Priority.critical || issue.priority == Priority.high then
-        Style.default.withFg (.ansi .red)
-      else
-        Style.default
+  -- Style the tree
+  let styledTree := state.issueTree
+    |>.withSelectedStyle (Style.reversed.withFg (.ansi .cyan))
+    |>.withBranchStyle (Style.bold.withFg (.ansi .yellow))
+    |>.withLeafStyle (Style.default.withFg (.ansi .white))
+    |>.withPrefixStyle (Style.default.withFg (.ansi .brightBlack))
+    |>.withExpandedChar "▼"
+    |>.withCollapsedChar "▶"
+    |>.withLeafChar "•"
 
-      buf := buf.writeString startX y row style
-      y := y + 1
-
-  buf
-
-/-- Draw the project selection list -/
-def drawProjectList (buf : Buffer) (state : AppState) (startX startY : Nat) (width height : Nat) : Buffer := Id.run do
-  let mut buf := buf
-  let items := state.projectListItems
-
-  -- Draw header
-  buf := buf.writeString startX startY "Select Project:" Style.bold
-  let mut y := startY + 2
-
-  if items.isEmpty then
-    buf := buf.writeString (startX + 2) y "No projects found." Style.default
-    return buf
-
-  let maxRows := height - 3
-  for idx in [:min items.size maxRows] do
-    if h : idx < items.size then
-      let filter := items[idx]
-      let isSelected := idx == state.projectSelectedIndex
-      let count := state.issueCountForProject filter
-
-      -- Build row content
-      let name := filter.toString
-      let countStr := s!" ({count})"
-      let row := s!"{name}{countStr}"
-
-      -- Style based on selection
-      let style := if isSelected then
-        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
-      else
-        Style.default
-
-      buf := buf.writeString startX y row style
-      y := y + 1
-
-  buf
+  frame.render styledTree area
 
 /-- Draw issue detail view -/
 def drawDetail (buf : Buffer) (state : AppState) (startX startY : Nat) (width height : Nat) : Buffer := Id.run do
@@ -385,8 +322,7 @@ def drawFooter (buf : Buffer) (state : AppState) (startX startY : Nat) (width : 
   let mut buf := buf
 
   let help : String := match state.viewMode with
-    | ViewMode.projectList => "[↑/↓] Navigate  [Enter] Select  [n] New  [q] Quit"
-    | ViewMode.list => "[↑/↓] Navigate  [Tab] Switch Tab  [Enter] View  [Esc] Back  [n] New  [q] Quit"
+    | ViewMode.tree => "[Tab] Switch View  [↑/↓] Navigate  [Enter] Toggle/View  [c] Show Closed  [n] New  [q] Quit"
     | ViewMode.detail => "[Esc] Back  [e] Edit  [c] Close  [r] Reopen  [q] Quit"
     | ViewMode.create | ViewMode.edit => "[Tab] Next Field  [Shift+Tab] Prev  [Ctrl+S] Save  [Esc] Cancel"
 
@@ -408,31 +344,54 @@ def drawFooter (buf : Buffer) (state : AppState) (startX startY : Nat) (width : 
 
 /-- Main draw function -/
 def draw (frame : Frame) (state : AppState) : Frame := Id.run do
-  let mut buf := frame.buffer.fill Cell.empty
-  let areaWidth := frame.area.width
-  let areaHeight := frame.area.height
-  let areaX := frame.area.x
-  let areaY := frame.area.y
+  let mut f := { frame with buffer := frame.buffer.fill Cell.empty }
+  let area := frame.area
 
-  -- Header (2 lines)
-  buf := drawHeader buf state areaX areaY areaWidth
+  match state.viewMode with
+  | .tree =>
+    -- Layout: Header (1 line) | Tabs (1 line) | Tree (fill) | Footer (1 line)
+    let headerArea := Rect.mk area.x area.y area.width 1
+    let tabsArea := Rect.mk area.x (area.y + 1) area.width 1
+    let treeHeight := if area.height > 3 then area.height - 3 else 1
+    let treeArea := Rect.mk area.x (area.y + 2) area.width treeHeight
+    let footerArea := Rect.mk area.x (area.y + area.height - 1) area.width 1
 
-  -- Main content area
-  let contentX := areaX + 1
-  let contentY := areaY + 2
-  let contentWidth := if areaWidth > 2 then areaWidth - 2 else 1
-  let contentHeight := if areaHeight > 4 then areaHeight - 4 else 1
+    -- Draw header
+    let buf := drawHeader f.buffer state headerArea.x headerArea.y headerArea.width
+    f := { f with buffer := buf }
 
-  buf := match state.viewMode with
-    | ViewMode.projectList => drawProjectList buf state contentX contentY contentWidth contentHeight
-    | ViewMode.list => drawList buf state contentX contentY contentWidth contentHeight
-    | ViewMode.detail => drawDetail buf state contentX contentY contentWidth contentHeight
-    | ViewMode.create | ViewMode.edit => drawForm buf state contentX contentY contentWidth contentHeight
+    -- Draw tabs
+    f := drawTabs f state tabsArea
 
-  -- Footer (1 line)
-  let footerY := areaY + areaHeight - 1
-  buf := drawFooter buf state areaX footerY areaWidth
+    -- Draw tree
+    f := drawTreeView f state treeArea
 
-  { frame with buffer := buf }
+    -- Draw footer
+    let buf := drawFooter f.buffer state footerArea.x footerArea.y footerArea.width
+    f := { f with buffer := buf }
+
+  | .detail | .create | .edit =>
+    -- Layout: Header (1 line) | Content (fill) | Footer (1 line)
+    let headerArea := Rect.mk area.x area.y area.width 1
+    let contentHeight := if area.height > 2 then area.height - 2 else 1
+    let contentArea := Rect.mk (area.x + 1) (area.y + 1) (area.width - 2) contentHeight
+    let footerArea := Rect.mk area.x (area.y + area.height - 1) area.width 1
+
+    -- Draw header
+    let buf := drawHeader f.buffer state headerArea.x headerArea.y headerArea.width
+    f := { f with buffer := buf }
+
+    -- Draw content
+    let buf := match state.viewMode with
+      | .detail => drawDetail f.buffer state contentArea.x contentArea.y contentArea.width contentArea.height
+      | .create | .edit => drawForm f.buffer state contentArea.x contentArea.y contentArea.width contentArea.height
+      | _ => f.buffer  -- unreachable
+    f := { f with buffer := buf }
+
+    -- Draw footer
+    let buf := drawFooter f.buffer state footerArea.x footerArea.y footerArea.width
+    f := { f with buffer := buf }
+
+  f
 
 end Tracker.TUI

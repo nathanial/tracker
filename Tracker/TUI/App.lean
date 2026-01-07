@@ -16,15 +16,15 @@ open Terminus
 /-- Load issues and create initial state -/
 def initState (config : Storage.Config) : IO AppState := do
   let issues ← Storage.loadAllIssues config
-  return {
+  let state : AppState := {
     config
     issues
-    viewMode := .projectList
-    filterTab := .open_
-    selectedIndex := 0
-    projectSelectedIndex := 0
-    projectFilter := .all
+    viewMode := .tree
+    treeViewMode := .byProject
+    showClosed := false
   }
+  -- Build initial tree
+  return state.rebuildTree
 
 /-- Process pending IO actions -/
 def processPendingAction (state : AppState) (action : PendingAction) : IO AppState := do
@@ -46,7 +46,7 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
             { newState with currentIssue := issues.find? (·.id == id) }
           else newState
         | none => newState
-      return newState.clampSelection
+      return newState.rebuildTree
     | none =>
       return { state with errorMessage := s!"Issue #{id} not found" }
 
@@ -65,7 +65,7 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
             { newState with currentIssue := issues.find? (·.id == id) }
           else newState
         | none => newState
-      return newState.clampSelection
+      return newState.rebuildTree
     | none =>
       return { state with errorMessage := s!"Issue #{id} not found" }
 
@@ -75,7 +75,7 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
       issues
       statusMessage := s!"Loaded {issues.size} issues"
       errorMessage := ""
-    }.clampSelection
+    }.rebuildTree
 
   | .createIssue title description priority labels assignee project =>
     let issue ← Storage.createIssue state.config title description priority labels assignee project
@@ -86,7 +86,7 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
       currentIssue := some issue
       statusMessage := s!"Created issue #{issue.id}"
       errorMessage := ""
-    }.clampSelection
+    }.rebuildTree
 
   | .updateIssue id title description priority labels assignee project =>
     let result ← Storage.updateIssue state.config id fun issue =>
@@ -106,7 +106,7 @@ def processPendingAction (state : AppState) (action : PendingAction) : IO AppSta
         currentIssue := some updatedIssue
         statusMessage := s!"Updated issue #{id}"
         errorMessage := ""
-      }.clampSelection
+      }.rebuildTree
     | none =>
       return { state with errorMessage := s!"Issue #{id} not found" }
 
