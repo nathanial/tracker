@@ -28,6 +28,27 @@ structure UpdateResult where
   pendingAction : PendingAction := .none
   deriving Inhabited
 
+/-- Handle input in project list view -/
+def updateProjectListView (state : AppState) (key : KeyEvent) : UpdateResult :=
+  match key.code with
+  -- Navigation
+  | .up | .char 'k' | .char 'K' =>
+    { state := state.moveProjectUp, shouldQuit := false, pendingAction := .none }
+  | .down | .char 'j' | .char 'J' =>
+    { state := state.moveProjectDown, shouldQuit := false, pendingAction := .none }
+  -- Enter project issues
+  | .enter =>
+    { state := state.enterProjectIssues, shouldQuit := false, pendingAction := .none }
+  -- Create new issue
+  | .char 'n' | .char 'N' =>
+    { state := state.enterCreate, shouldQuit := false, pendingAction := .none }
+  -- Refresh
+  | .char 'r' | .char 'R' =>
+    { state := state.setStatus "Refreshing..."
+      shouldQuit := false
+      pendingAction := .refreshIssues }
+  | _ => { state := state, shouldQuit := false, pendingAction := .none }
+
 /-- Handle input in list view -/
 def updateListView (state : AppState) (key : KeyEvent) : UpdateResult :=
   match key.code with
@@ -42,6 +63,9 @@ def updateListView (state : AppState) (key : KeyEvent) : UpdateResult :=
       { state := state.prevTab, shouldQuit := false, pendingAction := .none }
     else
       { state := state.nextTab, shouldQuit := false, pendingAction := .none }
+  -- Back to project list
+  | .escape =>
+    { state := state.returnToProjectList, shouldQuit := false, pendingAction := .none }
   -- Enter detail view
   | .enter =>
     { state := state.enterDetail, shouldQuit := false, pendingAction := .none }
@@ -200,6 +224,7 @@ def update (state : AppState) (event : Option Event) : UpdateResult :=
         { state := state, shouldQuit := true, pendingAction := .none }
     else
       match state.viewMode with
+      | .projectList => updateProjectListView state k
       | .list => updateListView state k
       | .detail => updateDetailView state k
       | .create | .edit => updateFormView state k

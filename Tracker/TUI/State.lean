@@ -10,7 +10,8 @@ open Tracker
 
 /-- Current view mode -/
 inductive ViewMode where
-  | list        -- Issue list
+  | projectList -- Project selection list
+  | list        -- Issue list (filtered by selected project)
   | detail      -- Single issue detail
   | create      -- Create new issue form
   | edit        -- Edit issue form
@@ -251,6 +252,29 @@ def toString : FilterTab → String
 
 end FilterTab
 
+/-- Project filter for two-level navigation -/
+inductive ProjectFilter where
+  | all                     -- Show all issues regardless of project
+  | noProject               -- Show only issues with no project assigned
+  | project (name : String) -- Show issues for specific project
+  deriving Inhabited
+
+namespace ProjectFilter
+
+instance : BEq ProjectFilter where
+  beq
+    | .all, .all => true
+    | .noProject, .noProject => true
+    | .project a, .project b => a == b
+    | _, _ => false
+
+def toString : ProjectFilter → String
+  | .all => "All Issues"
+  | .noProject => "No Project"
+  | .project name => name
+
+end ProjectFilter
+
 /-- TUI application state -/
 structure AppState where
   /-- Storage config -/
@@ -258,7 +282,7 @@ structure AppState where
   /-- All loaded issues -/
   issues : Array Issue
   /-- Current view -/
-  viewMode : ViewMode := .list
+  viewMode : ViewMode := .projectList
   /-- Current filter tab -/
   filterTab : FilterTab := .open_
   /-- Selected index in list view -/
@@ -271,18 +295,29 @@ structure AppState where
   statusMessage : String := ""
   /-- Error message -/
   errorMessage : String := ""
+  /-- Current project filter for two-level navigation -/
+  projectFilter : ProjectFilter := .all
+  /-- Selected index in project list view -/
+  projectSelectedIndex : Nat := 0
   deriving Inhabited
 
 namespace AppState
 
-/-- Get filtered issues based on current tab -/
+/-- Get filtered issues based on project filter AND status tab -/
 def filteredIssues (state : AppState) : Array Issue :=
   state.issues.filter fun issue =>
-    match state.filterTab with
-    | .open_ => issue.status == .open_
-    | .inProgress => issue.status == .inProgress
-    | .closed => issue.status == .closed
-    | .all => true
+    -- First filter by project
+    let projectMatch := match state.projectFilter with
+      | .all => true
+      | .noProject => issue.project.isNone
+      | .project name => issue.project == some name
+    -- Then filter by status tab
+    let statusMatch := match state.filterTab with
+      | .open_ => issue.status == .open_
+      | .inProgress => issue.status == .inProgress
+      | .closed => issue.status == .closed
+      | .all => true
+    projectMatch && statusMatch
 
 /-- Ensure selected index is valid -/
 def clampSelection (state : AppState) : AppState :=
@@ -337,6 +372,66 @@ def returnToList (state : AppState) : AppState :=
     viewMode := .list
     currentIssue := none }
 
+/-- Extract unique project names from all issues -/
+def projects (state : AppState) : Array String :=
+  state.issues
+    |>.filterMap (·.project)
+    |>.toList
+    |>.eraseDups
+    |>.toArray
+    |>.qsort (· < ·)
+
+/-- Get project list items for display (includes "All" and "No Project") -/
+def projectListItems (state : AppState) : Array ProjectFilter :=
+  let projectFilters := state.projects.map ProjectFilter.project
+  #[.all, .noProject] ++ projectFilters
+
+/-- Count issues per project filter -/
+def issueCountForProject (state : AppState) (filter : ProjectFilter) : Nat :=
+  state.issues.filter (fun issue =>
+    match filter with
+    | .all => true
+    | .noProject => issue.project.isNone
+    | .project name => issue.project == some name
+  ) |>.size
+
+/-- Move project selection up -/
+def moveProjectUp (state : AppState) : AppState :=
+  if state.projectSelectedIndex > 0 then
+    { state with projectSelectedIndex := state.projectSelectedIndex - 1 }
+  else state
+
+/-- Move project selection down -/
+def moveProjectDown (state : AppState) : AppState :=
+  let maxIdx := state.projectListItems.size
+  if state.projectSelectedIndex + 1 < maxIdx then
+    { state with projectSelectedIndex := state.projectSelectedIndex + 1 }
+  else state
+
+/-- Get currently selected project filter -/
+def selectedProjectFilter (state : AppState) : Option ProjectFilter :=
+  let items := state.projectListItems
+  if h : state.projectSelectedIndex < items.size then
+    some items[state.projectSelectedIndex]
+  else none
+
+/-- Enter issue list for selected project -/
+def enterProjectIssues (state : AppState) : AppState :=
+  match state.selectedProjectFilter with
+  | some filter =>
+    { state with
+      viewMode := .list
+      projectFilter := filter
+      selectedIndex := 0
+      filterTab := .open_ }.clampSelection
+  | none => state
+
+/-- Return to project list from issue list -/
+def returnToProjectList (state : AppState) : AppState :=
+  { state with
+    viewMode := .projectList
+    selectedIndex := 0 }
+
 /-- Set status message -/
 def setStatus (state : AppState) (msg : String) : AppState :=
   { state with statusMessage := msg, errorMessage := "" }
@@ -349,11 +444,15 @@ def setError (state : AppState) (msg : String) : AppState :=
 def clearMessages (state : AppState) : AppState :=
   { state with statusMessage := "", errorMessage := "" }
 
-/-- Enter create mode with empty form -/
+/-- Enter create mode with optional project pre-fill -/
 def enterCreate (state : AppState) : AppState :=
+  let projectText := match state.projectFilter with
+    | .project name => name
+    | _ => ""
   { state with
     viewMode := .create
-    formState := FormState.empty }
+    formState := { FormState.empty with
+      project := TextInput.clear.setText projectText } }
 
 /-- Enter edit mode for current issue -/
 def enterEdit (state : AppState) : AppState :=

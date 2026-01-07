@@ -19,9 +19,11 @@ def initState (config : Storage.Config) : IO AppState := do
   return {
     config
     issues
-    viewMode := .list
+    viewMode := .projectList
     filterTab := .open_
     selectedIndex := 0
+    projectSelectedIndex := 0
+    projectFilter := .all
   }
 
 /-- Process pending IO actions -/

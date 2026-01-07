@@ -18,7 +18,7 @@ private def padLeft (s : String) (len : Nat) (c : Char) : String :=
     String.mk (List.replicate padding c) ++ s
   else s
 
-/-- Draw the header with tabs -/
+/-- Draw the header with project context and tabs -/
 def drawHeader (buf : Buffer) (state : AppState) (startX startY : Nat) (width : Nat) : Buffer := Id.run do
   let mut buf := buf
 
@@ -26,17 +26,34 @@ def drawHeader (buf : Buffer) (state : AppState) (startX startY : Nat) (width : 
   let title := " Tracker "
   buf := buf.writeString startX startY title (Style.bold.withFg (.ansi .cyan))
 
-  -- Draw tabs
-  let tabs : List FilterTab := [.open_, .inProgress, .closed, .all]
-  let mut x := startX + title.length + 2
-  for tab in tabs do
-    let label := s!" {tab.toString} "
-    let style := if state.filterTab == tab then
-      Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
-    else
-      Style.default.withFg (.ansi .white)
-    buf := buf.writeString x startY label style
-    x := x + label.length + 1
+  let mut x := startX + title.length
+
+  -- Show breadcrumb based on view mode
+  match state.viewMode with
+  | .projectList =>
+    -- In project list, show "Projects"
+    buf := buf.writeString x startY " > Projects" (Style.default.withFg (.ansi .yellow))
+  | .list =>
+    -- In issue list, show project name and tabs
+    let projectName := state.projectFilter.toString
+    let breadcrumb := s!" > {projectName}"
+    buf := buf.writeString x startY breadcrumb (Style.default.withFg (.ansi .yellow))
+    x := x + breadcrumb.length + 2
+
+    -- Draw status filter tabs
+    let tabs : List FilterTab := [.open_, .inProgress, .closed, .all]
+    for tab in tabs do
+      let label := s!" {tab.toString} "
+      let style := if state.filterTab == tab then
+        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
+      else
+        Style.default.withFg (.ansi .white)
+      buf := buf.writeString x startY label style
+      x := x + label.length + 1
+  | _ =>
+    -- For detail/create/edit, show same as list view
+    let projectName := state.projectFilter.toString
+    buf := buf.writeString x startY s!" > {projectName}" (Style.default.withFg (.ansi .yellow))
 
   buf
 
@@ -79,6 +96,42 @@ def drawList (buf : Buffer) (state : AppState) (startX startY : Nat) (width heig
         Style.default.withFg (.ansi .brightBlack)
       else if issue.priority == Priority.critical || issue.priority == Priority.high then
         Style.default.withFg (.ansi .red)
+      else
+        Style.default
+
+      buf := buf.writeString startX y row style
+      y := y + 1
+
+  buf
+
+/-- Draw the project selection list -/
+def drawProjectList (buf : Buffer) (state : AppState) (startX startY : Nat) (width height : Nat) : Buffer := Id.run do
+  let mut buf := buf
+  let items := state.projectListItems
+
+  -- Draw header
+  buf := buf.writeString startX startY "Select Project:" Style.bold
+  let mut y := startY + 2
+
+  if items.isEmpty then
+    buf := buf.writeString (startX + 2) y "No projects found." Style.default
+    return buf
+
+  let maxRows := height - 3
+  for idx in [:min items.size maxRows] do
+    if h : idx < items.size then
+      let filter := items[idx]
+      let isSelected := idx == state.projectSelectedIndex
+      let count := state.issueCountForProject filter
+
+      -- Build row content
+      let name := filter.toString
+      let countStr := s!" ({count})"
+      let row := s!"{name}{countStr}"
+
+      -- Style based on selection
+      let style := if isSelected then
+        Style.default.withBg (.ansi .blue) |>.withFg (.ansi .white)
       else
         Style.default
 
@@ -332,7 +385,8 @@ def drawFooter (buf : Buffer) (state : AppState) (startX startY : Nat) (width : 
   let mut buf := buf
 
   let help : String := match state.viewMode with
-    | ViewMode.list => "[↑/↓] Navigate  [Tab] Switch Tab  [Enter] View  [n] New  [q] Quit"
+    | ViewMode.projectList => "[↑/↓] Navigate  [Enter] Select  [n] New  [q] Quit"
+    | ViewMode.list => "[↑/↓] Navigate  [Tab] Switch Tab  [Enter] View  [Esc] Back  [n] New  [q] Quit"
     | ViewMode.detail => "[Esc] Back  [e] Edit  [c] Close  [r] Reopen  [q] Quit"
     | ViewMode.create | ViewMode.edit => "[Tab] Next Field  [Shift+Tab] Prev  [Ctrl+S] Save  [Esc] Cancel"
 
@@ -370,6 +424,7 @@ def draw (frame : Frame) (state : AppState) : Frame := Id.run do
   let contentHeight := if areaHeight > 4 then areaHeight - 4 else 1
 
   buf := match state.viewMode with
+    | ViewMode.projectList => drawProjectList buf state contentX contentY contentWidth contentHeight
     | ViewMode.list => drawList buf state contentX contentY contentWidth contentHeight
     | ViewMode.detail => drawDetail buf state contentX contentY contentWidth contentHeight
     | ViewMode.create | ViewMode.edit => drawForm buf state contentX contentY contentWidth contentHeight
