@@ -15,33 +15,9 @@ namespace Tracker
 open Tracker.CLI
 open Parlance
 
-/-- Print help message -/
-def printHelp : IO Unit := do
-  IO.println "Tracker - Local issue tracker for Claude Code"
-  IO.println ""
-  IO.println "Usage:"
-  IO.println "  tracker                    Launch interactive TUI"
-  IO.println "  tracker <command> [args]   Run CLI command"
-  IO.println ""
-  IO.println "Commands:"
-  IO.println "  init                       Initialize .issues directory"
-  IO.println "  add <title>                Create a new issue"
-  IO.println "  list                       List issues"
-  IO.println "  show <id>                  Show issue details"
-  IO.println "  update <id>                Update an issue"
-  IO.println "  progress <id> <message>    Add progress note"
-  IO.println "  close <id> [comment]       Close an issue"
-  IO.println "  reopen <id>                Reopen a closed issue"
-  IO.println "  block <id> --by=<id>       Add dependency"
-  IO.println "  unblock <id> --by=<id>     Remove dependency"
-  IO.println "  deps <id>                  Show dependency graph"
-  IO.println "  delete <id>                Delete an issue"
-  IO.println "  tui                        Launch interactive TUI"
-  IO.println ""
-  IO.println "Options:"
-  IO.println "  -t, --text                 Output in text format (default: JSON)"
-  IO.println "  -h, --help                 Show this help"
-  IO.println "  -V, --version              Show version"
+/-- Print help message using Parlance's auto-generation -/
+def printHelp : IO Unit :=
+  trackerCommand.printHelp
 
 /-- Launch TUI mode -/
 def launchTui : IO Unit := do
