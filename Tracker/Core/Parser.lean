@@ -1,17 +1,15 @@
 /-
   YAML frontmatter and markdown body parser for issues.
+  Built on the Sift parser combinator library.
 -/
 import Tracker.Core.Types
+import Sift
 
 namespace Tracker.Parser
 
-/-- Find the index of the first character matching a predicate -/
-private def stringFindIdx? (s : String) (p : Char → Bool) : Option Nat :=
-  let rec go (chars : List Char) (idx : Nat) : Option Nat :=
-    match chars with
-    | [] => none
-    | c :: rest => if p c then some idx else go rest (idx + 1)
-  go s.toList 0
+open Sift
+
+/-! ### Data Structures -/
 
 /-- Parse result for frontmatter -/
 structure FrontmatterData where
@@ -35,155 +33,271 @@ structure ParsedIssue where
   progress : Array ProgressEntry
   deriving Repr, Inhabited
 
-/-- Split content into frontmatter and body -/
-def splitFrontmatter (content : String) : Option (String × String) := do
-  let lines := content.splitOn "\n"
-  -- Must start with ---
-  guard (lines.head? == some "---")
-  let rest := lines.drop 1
-  -- Find closing ---
-  let idx? := rest.findIdx? (· == "---")
-  let idx ← idx?
-  let frontmatterLines := rest.take idx
-  let bodyLines := rest.drop (idx + 1)
-  let frontmatter := String.intercalate "\n" frontmatterLines
-  let body := String.intercalate "\n" bodyLines
-  pure (frontmatter, body)
+/-! ### Primitive Parsers -/
 
-/-- Trim whitespace from both ends of a string -/
-def trim (s : String) : String :=
-  s.dropWhile Char.isWhitespace |>.dropRightWhile Char.isWhitespace
+/-- Skip horizontal whitespace only (space/tab) -/
+private def skipHWS : Parser Unit Unit := hspaces
 
-/-- Parse a YAML-style array like [a, b, c] or ["a", "b"] -/
-def parseStringArray (s : String) : Array String :=
-  let s := trim s
-  if !s.startsWith "[" || !s.endsWith "]" then #[]
-  else
-    let inner := s.drop 1 |>.dropRight 1 |> trim
-    if inner.isEmpty then #[]
-    else
-      let parts := inner.splitOn ","
-      parts.toArray.map fun p =>
-        let p := trim p
-        -- Remove quotes if present
-        if p.startsWith "\"" && p.endsWith "\"" then
-          p.drop 1 |>.dropRight 1
-        else if p.startsWith "'" && p.endsWith "'" then
-          p.drop 1 |>.dropRight 1
-        else p
+/-- Parse rest of line up to newline (not including it) -/
+private def restOfLine : Parser Unit String :=
+  takeWhile (fun c => c != '\n' && c != '\r')
 
-/-- Parse a YAML-style array of numbers -/
-def parseNatArray (s : String) : Array Nat :=
-  let strings := parseStringArray s
-  strings.filterMap String.toNat?
+/-- Skip to end of line including the newline -/
+private def skipLine : Parser Unit Unit := do
+  let _ ← restOfLine
+  let _ ← Sift.optional eol
 
-/-- Parse a key-value line (key: value) -/
-def parseKeyValue (line : String) : Option (String × String) := do
-  let idx ← stringFindIdx? line (· == ':')
-  let key := trim (line.take idx)
-  let value := trim (line.drop (idx + 1))
-  guard (!key.isEmpty)
-  pure (key, value)
+/-! ### YAML Primitive Parsers -/
 
-/-- Parse frontmatter section into structured data -/
-def parseFrontmatter (content : String) : FrontmatterData := Id.run do
+/-- Parse a YAML key (alphanumeric, underscore, hyphen) -/
+private def yamlKey : Parser Unit String :=
+  takeWhile1 (fun c => c.isAlphanum || c == '_' || c == '-') <?> "YAML key"
+
+/-- Parse a quoted string (single or double quotes) -/
+private def quotedString : Parser Unit String := do
+  let quote ← char '"' <|> char '\''
+  let content ← takeWhile (· != quote)
+  let _ ← char quote
+  pure content
+
+/-- Strip surrounding quotes from a string if present -/
+private def stripQuotes (s : String) : String :=
+  if (s.startsWith "\"" && s.endsWith "\"") ||
+     (s.startsWith "'" && s.endsWith "'") then
+    s.drop 1 |>.dropRight 1
+  else s
+
+/-- Parse "null" or empty as None, otherwise Some value -/
+private def parseNullable (s : String) : Option String :=
+  let s := stripQuotes s.trim
+  if s.isEmpty || s == "null" then none else some s
+
+/-- Parse a YAML string array: [item1, item2, ...] -/
+private partial def yamlStringArray : Parser Unit (Array String) := do
+  let _ ← char '['
+  skipHWS
+  if (← peek) == some ']' then
+    let _ ← char ']'
+    return #[]
+  let mut items : Array String := #[]
+  repeat do
+    skipHWS
+    let item ← match ← peek with
+      | some '"' | some '\'' => quotedString
+      | _ => takeWhile1 (fun c => c != ',' && c != ']' && c != '\n')
+    items := items.push item.trim
+    skipHWS
+    match ← peek with
+    | some ',' => let _ ← char ','
+    | some ']' => break
+    | _ => Parser.fail "expected ',' or ']' in array"
+  let _ ← char ']'
+  return items
+
+/-- Parse a YAML numeric array: [1, 2, 3] -/
+private partial def yamlNatArray : Parser Unit (Array Nat) := do
+  let _ ← char '['
+  skipHWS
+  if (← peek) == some ']' then
+    let _ ← char ']'
+    return #[]
+  let mut items : Array Nat := #[]
+  repeat do
+    skipHWS
+    let n ← natural
+    items := items.push n
+    skipHWS
+    match ← peek with
+    | some ',' => let _ ← char ','
+    | some ']' => break
+    | _ => Parser.fail "expected ',' or ']' in array"
+  let _ ← char ']'
+  return items
+
+/-! ### Frontmatter Parser -/
+
+/-- Parse the --- delimiter line -/
+private def frontmatterDelimiter : Parser Unit Unit := do
+  let _ ← string "---"
+  skipHWS
+  let _ ← eol <|> eof
+
+/-- Parse a single key-value line in frontmatter -/
+private def keyValueLine : Parser Unit (String × String) := do
+  let key ← yamlKey
+  skipHWS
+  let _ ← char ':'
+  skipHWS
+  let value ← restOfLine
+  let _ ← Sift.optional eol
+  pure (key, value.trim)
+
+/-- Parse all frontmatter key-value pairs -/
+private partial def frontmatterLines : Parser Unit (Array (String × String)) := do
+  let mut pairs : Array (String × String) := #[]
+  while true do
+    -- Check for closing delimiter
+    match ← peekString 3 with
+    | some "---" => break
+    | _ => pure ()
+    -- Check for end of input
+    if ← atEnd then
+      Parser.fail "unclosed frontmatter (expected closing ---)"
+    -- Parse key-value or skip empty/comment lines
+    skipHWS
+    match ← peek with
+    | some '\n' | some '\r' =>
+      let _ ← eol
+    | some '#' =>
+      skipLine
+    | some _ =>
+      let pair ← keyValueLine
+      pairs := pairs.push pair
+    | none => break
+  pure pairs
+
+/-- Build FrontmatterData from parsed key-value pairs -/
+private def buildFrontmatterData (pairs : Array (String × String)) : FrontmatterData := Id.run do
   let mut data : FrontmatterData := {}
-  for line in content.splitOn "\n" do
-    if let some (key, value) := parseKeyValue line then
-      match key with
-      | "id" => data := { data with id := value.toNat? }
-      | "title" =>
-        -- Remove surrounding quotes if present
-        let v := if value.startsWith "\"" && value.endsWith "\"" then
-          value.drop 1 |>.dropRight 1
-        else value
-        data := { data with title := some v }
-      | "status" => data := { data with status := some value }
-      | "priority" => data := { data with priority := some value }
-      | "created" => data := { data with created := some value }
-      | "updated" => data := { data with updated := some value }
-      | "labels" => data := { data with labels := parseStringArray value }
-      | "assignee" =>
-        if value == "null" || value.isEmpty then
-          data := { data with assignee := none }
-        else
-          let v := if value.startsWith "\"" && value.endsWith "\"" then
-            value.drop 1 |>.dropRight 1
-          else value
-          data := { data with assignee := some v }
-      | "project" =>
-        if value == "null" || value.isEmpty then
-          data := { data with project := none }
-        else
-          let v := if value.startsWith "\"" && value.endsWith "\"" then
-            value.drop 1 |>.dropRight 1
-          else value
-          data := { data with project := some v }
-      | "blocks" => data := { data with blocks := parseNatArray value }
-      | "blocked_by" | "blockedBy" => data := { data with blockedBy := parseNatArray value }
-      | _ => pure ()  -- Ignore unknown keys
+  for (key, value) in pairs do
+    match key with
+    | "id" => data := { data with id := value.toNat? }
+    | "title" =>
+      let v := stripQuotes value
+      data := { data with title := some v }
+    | "status" => data := { data with status := some value }
+    | "priority" => data := { data with priority := some value }
+    | "created" => data := { data with created := some value }
+    | "updated" => data := { data with updated := some value }
+    | "labels" =>
+      match Parser.run yamlStringArray value with
+      | .ok arr => data := { data with labels := arr }
+      | .error _ => data := { data with labels := #[] }
+    | "assignee" => data := { data with assignee := parseNullable value }
+    | "project" => data := { data with project := parseNullable value }
+    | "blocks" =>
+      match Parser.run yamlNatArray value with
+      | .ok arr => data := { data with blocks := arr }
+      | .error _ => data := { data with blocks := #[] }
+    | "blocked_by" | "blockedBy" =>
+      match Parser.run yamlNatArray value with
+      | .ok arr => data := { data with blockedBy := arr }
+      | .error _ => data := { data with blockedBy := #[] }
+    | _ => pure ()  -- Ignore unknown keys
   data
 
-/-- Parse progress entries from markdown body -/
-def parseProgress (body : String) : Array ProgressEntry := Id.run do
+/-- Parse complete frontmatter section -/
+private def parseFrontmatterSection : Parser Unit FrontmatterData := do
+  frontmatterDelimiter
+  let pairs ← frontmatterLines
+  frontmatterDelimiter
+  pure (buildFrontmatterData pairs)
+
+/-! ### Markdown Body Parser -/
+
+/-- Parse a progress entry: - [TIMESTAMP] Message -/
+private def progressEntry : Parser Unit ProgressEntry := do
+  skipHWS
+  let _ ← string "- ["
+  let timestamp ← takeWhile (· != ']')
+  let _ ← char ']'
+  skipHWS
+  let message ← restOfLine
+  pure { timestamp := timestamp.trim, message := message.trim }
+
+/-- Parse the Progress section -/
+private partial def parseProgressSection : Parser Unit (Array ProgressEntry) := do
   let mut entries : Array ProgressEntry := #[]
-  let mut inProgress := false
-  for line in body.splitOn "\n" do
-    let trimmed := trim line
-    -- Check for Progress section header
-    if trimmed.startsWith "## Progress" || trimmed.startsWith "## progress" then
-      inProgress := true
-    else if trimmed.startsWith "## " then
-      inProgress := false
-    else if inProgress && trimmed.startsWith "- [" then
-      -- Parse progress entry: - [2026-01-06 10:30] Message
-      let rest := trimmed.drop 3  -- Remove "- ["
-      if let some endIdx := stringFindIdx? rest (· == ']') then
-        let timestamp := rest.take endIdx
-        let message := trim (rest.drop (endIdx + 1))
-        entries := entries.push { timestamp, message }
-  entries
+  while true do
+    if ← atEnd then break
+    skipHWS
+    match ← peek with
+    | some '-' =>
+      -- Check if this is a progress entry
+      match ← peekString 3 with
+      | some "- [" =>
+        let entry ← progressEntry
+        entries := entries.push entry
+        let _ ← Sift.optional eol
+      | _ => break
+    | some '#' => break
+    | some '\n' | some '\r' =>
+      let _ ← eol
+    | _ => break
+  pure entries
 
-/-- Extract description from markdown body (everything before ## Progress or first ## section) -/
-def parseDescription (body : String) : String := Id.run do
-  let mut lines : Array String := #[]
+/-- Parse the markdown body (description and progress) -/
+private partial def parseBody : Parser Unit (String × Array ProgressEntry) := do
+  let mut descLines : Array String := #[]
+  let mut progress : Array ProgressEntry := #[]
   let mut inDescription := false
-  let mut foundFirstHeading := false
-  for line in body.splitOn "\n" do
-    let trimmed := trim line
-    -- Skip the title heading (# Title)
-    if trimmed.startsWith "# " && !foundFirstHeading then
-      foundFirstHeading := true
-    else if trimmed.startsWith "## Description" then
-      inDescription := true
-    else if trimmed.startsWith "## " && inDescription then
-      -- End of description section
-      break
-    else if inDescription then
-      lines := lines.push line
-  if lines.isEmpty then
-    -- No explicit description section, take everything before ## Progress
-    let mut result : Array String := #[]
-    let mut pastTitle := false
-    for line in body.splitOn "\n" do
-      let trimmed := trim line
-      if trimmed.startsWith "# " && !pastTitle then
-        pastTitle := true
-      else if trimmed.startsWith "## Progress" then
-        break
-      else if pastTitle then
-        result := result.push line
-    trim (String.intercalate "\n" result.toList)
-  else
-    trim (String.intercalate "\n" lines.toList)
+  let mut pastTitle := false
 
-/-- Parse a full issue file -/
-def parseIssueFile (content : String) : Option ParsedIssue := do
-  let (frontmatterStr, body) ← splitFrontmatter content
-  let frontmatter := parseFrontmatter frontmatterStr
-  let description := parseDescription body
-  let progress := parseProgress body
+  while true do
+    if ← atEnd then break
+
+    -- Peek at line start
+    skipHWS
+    match ← peekString 2 with
+    | some "# " =>
+      if !pastTitle then
+        -- Skip title line
+        pastTitle := true
+        skipLine
+      else
+        -- Some other heading in description
+        let line ← restOfLine
+        descLines := descLines.push line
+        let _ ← Sift.optional eol
+    | some "##" =>
+      let line ← restOfLine
+      let trimmed := line.trim
+      if trimmed.startsWith "## Description" then
+        inDescription := true
+        let _ ← Sift.optional eol
+      else if trimmed.startsWith "## Progress" || trimmed.startsWith "## progress" then
+        inDescription := false
+        let _ ← Sift.optional eol
+        progress ← parseProgressSection
+      else if trimmed.startsWith "## " then
+        -- Unknown section, stop description
+        inDescription := false
+        let _ ← Sift.optional eol
+      else
+        if inDescription then
+          descLines := descLines.push line
+        let _ ← Sift.optional eol
+    | _ =>
+      if inDescription then
+        let line ← restOfLine
+        descLines := descLines.push line
+        let _ ← Sift.optional eol
+      else if !pastTitle then
+        skipLine
+      else
+        -- Content before first ## section goes to description
+        let line ← restOfLine
+        descLines := descLines.push line
+        let _ ← Sift.optional eol
+
+  let description := String.intercalate "\n" descLines.toList |>.trim
+  pure (description, progress)
+
+/-! ### Main Parser -/
+
+/-- Parse a complete issue file -/
+private def parseIssueP : Parser Unit ParsedIssue := do
+  let frontmatter ← parseFrontmatterSection
+  let (description, progress) ← parseBody
   pure { frontmatter, description, progress }
+
+/-- Parse a full issue file (public API) -/
+def parseIssueFile (content : String) : Except String ParsedIssue :=
+  match Parser.run parseIssueP content with
+  | .ok result => .ok result
+  | .error e => .error s!"Parse error at line {e.pos.line}, column {e.pos.column}: {e.message}"
+
+/-! ### Conversion Functions -/
 
 /-- Convert parsed data to an Issue (with defaults for missing fields) -/
 def toIssue (parsed : ParsedIssue) (defaultId : Nat) (defaultTimestamp : String) : Issue :=

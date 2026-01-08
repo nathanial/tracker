@@ -67,10 +67,11 @@ def readIssue (path : System.FilePath) : IO (Option Issue) := do
     return none
   let content ← IO.FS.readFile path
   match Parser.parseIssueFile content with
-  | some parsed =>
+  | .ok parsed =>
     let timestamp ← nowIso8601
     return some (Parser.toIssue parsed 0 timestamp)
-  | none =>
+  | .error e =>
+    IO.eprintln s!"Warning: Failed to parse {path}: {e}"
     return none
 
 /-- Write an issue to its file -/
