@@ -306,11 +306,19 @@ def computeExpansionKey (nodes : Array (TreeNode String)) (mode : TreeViewMode) 
       some (AppState.baseLabel label)
     | [i, j] =>
       -- Toggling a status branch within a project
-      let projectNode ← nodes[i]?
-      let projectLabel := AppState.baseLabel projectNode.value
-      let statusNode ← projectNode.children[j]?
-      let statusLabel := AppState.baseLabel statusNode.value
-      some s!"{projectLabel}/{statusLabel}"
+      -- Use bounds-safe access to handle any potential index mismatch
+      if h : i < nodes.size then
+        let projectNode := nodes[i]
+        let projectLabel := AppState.baseLabel projectNode.value
+        if h2 : j < projectNode.children.size then
+          let statusNode := projectNode.children[j]
+          let statusLabel := AppState.baseLabel statusNode.value
+          some s!"{projectLabel}/{statusLabel}"
+        else
+          -- Fallback: just use project key if status lookup fails
+          some projectLabel
+      else
+        none
     | _ => none
 
 /-! ## Main App -/
