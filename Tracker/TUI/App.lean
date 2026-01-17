@@ -49,7 +49,7 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
     let mut nodes : Array (TreeNode String) := #[]
     for (project, projectIssues) in sorted do
       let leaves := projectIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.branch s!"{project} ({projectIssues.size})" leaves)
+      nodes := nodes.push (TreeNode.collapsedBranch s!"{project} ({projectIssues.size})" leaves)
     nodes
 
   | .byStatus =>
@@ -60,13 +60,13 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
     let mut nodes : Array (TreeNode String) := #[]
     if !openIssues.isEmpty then
       let leaves := openIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.branch s!"Open ({openIssues.size})" leaves)
+      nodes := nodes.push (TreeNode.collapsedBranch s!"Open ({openIssues.size})" leaves)
     if !inProgressIssues.isEmpty then
       let leaves := inProgressIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.branch s!"In Progress ({inProgressIssues.size})" leaves)
+      nodes := nodes.push (TreeNode.collapsedBranch s!"In Progress ({inProgressIssues.size})" leaves)
     if showClosed && !closedIssues.isEmpty then
       let leaves := closedIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.branch s!"Closed ({closedIssues.size})" leaves)
+      nodes := nodes.push (TreeNode.collapsedBranch s!"Closed ({closedIssues.size})" leaves)
     nodes
 
   | .byProjectStatus =>
@@ -90,16 +90,16 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
       let mut statusBranches : Array (TreeNode String) := #[]
       if !openIssues.isEmpty then
         let leaves := openIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.branch s!"Open ({openIssues.size})" leaves)
+        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"Open ({openIssues.size})" leaves)
       if !inProgressIssues.isEmpty then
         let leaves := inProgressIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.branch s!"In Progress ({inProgressIssues.size})" leaves)
+        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"In Progress ({inProgressIssues.size})" leaves)
       if showClosed && !closedIssues.isEmpty then
         let leaves := closedIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.branch s!"Closed ({closedIssues.size})" leaves)
+        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"Closed ({closedIssues.size})" leaves)
 
       if !statusBranches.isEmpty then
-        nodes := nodes.push (TreeNode.branch s!"{project} ({projectIssues.size})" statusBranches)
+        nodes := nodes.push (TreeNode.collapsedBranch s!"{project} ({projectIssues.size})" statusBranches)
     nodes
 
 /-! ## Text Input Handler -/
