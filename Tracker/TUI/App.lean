@@ -24,9 +24,17 @@ def bodyStyle : Style := {}
 
 /-! ## Tree Building -/
 
-/-- Build tree nodes from issues based on view mode -/
+/-- Create a branch node with expansion state from the tracked array -/
+private def makeBranch (label : String) (children : Array (TreeNode String))
+    (key : String) (expanded : Array String) : TreeNode String :=
+  if expanded.contains key then
+    TreeNode.branch label children
+  else
+    TreeNode.collapsedBranch label children
+
+/-- Build tree nodes from issues based on view mode, preserving expansion state -/
 def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bool)
-    : Array (TreeNode String) := Id.run do
+    (expanded : Array String) : Array (TreeNode String) := Id.run do
   let filtered := if showClosed then issues
                   else issues.filter (·.status != .closed)
 
@@ -46,7 +54,9 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
     let mut nodes : Array (TreeNode String) := #[]
     for (project, projectIssues) in sorted do
       let leaves := projectIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.collapsedBranch s!"{project} ({projectIssues.size})" leaves)
+      let label := s!"{project} ({projectIssues.size})"
+      let key := project  -- Use project name as the expansion key
+      nodes := nodes.push (makeBranch label leaves key expanded)
     nodes
 
   | .byStatus =>
@@ -57,13 +67,16 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
     let mut nodes : Array (TreeNode String) := #[]
     if !openIssues.isEmpty then
       let leaves := openIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.collapsedBranch s!"Open ({openIssues.size})" leaves)
+      let label := s!"Open ({openIssues.size})"
+      nodes := nodes.push (makeBranch label leaves "Open" expanded)
     if !inProgressIssues.isEmpty then
       let leaves := inProgressIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.collapsedBranch s!"In Progress ({inProgressIssues.size})" leaves)
+      let label := s!"In Progress ({inProgressIssues.size})"
+      nodes := nodes.push (makeBranch label leaves "In Progress" expanded)
     if showClosed && !closedIssues.isEmpty then
       let leaves := closedIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-      nodes := nodes.push (TreeNode.collapsedBranch s!"Closed ({closedIssues.size})" leaves)
+      let label := s!"Closed ({closedIssues.size})"
+      nodes := nodes.push (makeBranch label leaves "Closed" expanded)
     nodes
 
   | .byProjectStatus =>
@@ -87,16 +100,23 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
       let mut statusBranches : Array (TreeNode String) := #[]
       if !openIssues.isEmpty then
         let leaves := openIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"Open ({openIssues.size})" leaves)
+        let label := s!"Open ({openIssues.size})"
+        let key := s!"{project}/Open"
+        statusBranches := statusBranches.push (makeBranch label leaves key expanded)
       if !inProgressIssues.isEmpty then
         let leaves := inProgressIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"In Progress ({inProgressIssues.size})" leaves)
+        let label := s!"In Progress ({inProgressIssues.size})"
+        let key := s!"{project}/In Progress"
+        statusBranches := statusBranches.push (makeBranch label leaves key expanded)
       if showClosed && !closedIssues.isEmpty then
         let leaves := closedIssues.map fun issue => TreeNode.leaf (AppState.issueLabel issue)
-        statusBranches := statusBranches.push (TreeNode.collapsedBranch s!"Closed ({closedIssues.size})" leaves)
+        let label := s!"Closed ({closedIssues.size})"
+        let key := s!"{project}/Closed"
+        statusBranches := statusBranches.push (makeBranch label leaves key expanded)
 
       if !statusBranches.isEmpty then
-        nodes := nodes.push (TreeNode.collapsedBranch s!"{project} ({projectIssues.size})" statusBranches)
+        let label := s!"{project} ({projectIssues.size})"
+        nodes := nodes.push (makeBranch label statusBranches project expanded)
     nodes
 
 /-! ## Events -/
@@ -106,6 +126,8 @@ inductive AppEvent where
   | key (kd : KeyData)
   | refresh
   | selectIssue (id : Nat)
+  | toggleBranch (key : String)  -- Toggle expansion state for a branch
+  | updateSelection (label : Option String)  -- Track current tree selection
   deriving Inhabited
 
 /-! ## Form Input Handler -/
@@ -151,6 +173,12 @@ def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState)
   | .refresh =>
     let issues ← Storage.loadAllIssues config
     pure { state with issues }
+
+  | .toggleBranch key =>
+    pure (state.toggleExpanded key)
+
+  | .updateSelection label =>
+    pure { state with selectedLabel := label }
 
   | .selectIssue id =>
     match state.issues.find? (·.id == id) with
@@ -235,6 +263,56 @@ def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState)
           pure (handleFormInput state ke)
       | _ => pure (handleFormInput state ke)
 
+/-! ## Expansion Key Computation -/
+
+/-- Get the label of a node at the given path in a tree forest -/
+private def getNodeLabelAtPath (nodes : Array (TreeNode String)) (path : Array Nat) : Option String := do
+  match path.toList with
+  | [] => none
+  | [i] => nodes[i]?.map (·.value)
+  | i :: rest =>
+    let node ← nodes[i]?
+    getChildLabelAtPath node.children rest
+where
+  getChildLabelAtPath (children : Array (TreeNode String)) : List Nat → Option String
+    | [] => none
+    | [i] => children[i]?.map (·.value)
+    | i :: rest => do
+      let node ← children[i]?
+      getChildLabelAtPath node.children rest
+
+/-- Compute the expansion key for a toggled branch at the given path.
+    The key format depends on the tree view mode:
+    - byProject: project name (e.g., "Reactive")
+    - byStatus: status name (e.g., "Open")
+    - byProjectStatus: "project/status" for nested (e.g., "Reactive/Open") -/
+def computeExpansionKey (nodes : Array (TreeNode String)) (mode : TreeViewMode) (path : Array Nat)
+    : Option String := do
+  match mode with
+  | .byProject =>
+    -- Single level: path is [projectIndex], key is project name
+    let label ← getNodeLabelAtPath nodes path
+    some (AppState.baseLabel label)
+  | .byStatus =>
+    -- Single level: path is [statusIndex], key is status name
+    let label ← getNodeLabelAtPath nodes path
+    some (AppState.baseLabel label)
+  | .byProjectStatus =>
+    -- Two levels: path can be [projectIdx] or [projectIdx, statusIdx]
+    match path.toList with
+    | [i] =>
+      -- Toggling a project branch
+      let label ← nodes[i]?.map (·.value)
+      some (AppState.baseLabel label)
+    | [i, j] =>
+      -- Toggling a status branch within a project
+      let projectNode ← nodes[i]?
+      let projectLabel := AppState.baseLabel projectNode.value
+      let statusNode ← projectNode.children[j]?
+      let statusLabel := AppState.baseLabel statusNode.value
+      some s!"{projectLabel}/{statusLabel}"
+    | _ => none
+
 /-! ## Main App -/
 
 /-- Run the TUI application -/
@@ -259,6 +337,12 @@ def run (config : Storage.Config) : IO Unit := do
     -- Trigger event for tree selection (forest' widget fires this)
     let (selectIssueEvent, fireSelectIssue) ← newTriggerEvent (a := Nat)
 
+    -- Trigger event for branch toggle (forest' widget fires this)
+    let (toggleBranchEvent, fireToggleBranch) ← newTriggerEvent (a := String)
+
+    -- Trigger event for tracking current selection (for restoring after rebuild)
+    let (selectionUpdateEvent, fireSelectionUpdate) ← newTriggerEvent (a := Option String)
+
     -- Map raw events to AppEvent
     let keyAppEvents ← Event.mapM (fun kd => AppEvent.key kd) keyEvents
 
@@ -269,9 +353,17 @@ def run (config : Storage.Config) : IO Unit := do
     -- Map tree selection to AppEvent
     let selectAppEvents ← Event.mapM (fun id => AppEvent.selectIssue id) selectIssueEvent
 
+    -- Map branch toggle to AppEvent
+    let toggleAppEvents ← Event.mapM (fun key => AppEvent.toggleBranch key) toggleBranchEvent
+
+    -- Map selection updates to AppEvent
+    let selectionAppEvents ← Event.mapM (fun label => AppEvent.updateSelection label) selectionUpdateEvent
+
     -- Merge all event streams
     let events1 ← Event.mergeM keyAppEvents refreshAppEvents
-    let allEvents ← Event.mergeM events1 selectAppEvents
+    let events2 ← Event.mergeM events1 selectAppEvents
+    let events3 ← Event.mergeM events2 toggleAppEvents
+    let allEvents ← Event.mergeM events3 selectionAppEvents
 
     -- Fold events into state using foldDynM (idiomatic FRP)
     -- Key-to-action mapping happens inside processEvent with access to current state
@@ -286,6 +378,8 @@ def run (config : Storage.Config) : IO Unit := do
       let issuesDyn ← stateDyn.map' (·.issues)
       let treeModeDyn ← stateDyn.map' (·.treeViewMode)
       let showClosedDyn ← stateDyn.map' (·.showClosed)
+      let expandedBranchesDyn ← stateDyn.map' (·.expandedBranches)
+      let selectedLabelDyn ← stateDyn.map' (·.selectedLabel)
       let currentIssueDyn ← stateDyn.map' (·.currentIssue)
       let formStateDyn ← stateDyn.map' (·.formState)
       let statusMsgDyn ← stateDyn.map' (·.statusMessage)
@@ -322,23 +416,51 @@ def run (config : Storage.Config) : IO Unit := do
                   RNode.text tabsText { fg := .ansi .cyan }
                 emit tabsNode
 
-                -- Tree - rebuild when issues, mode, or showClosed changes
+                -- Tree - rebuild only when issues, mode, or showClosed change
+                -- Expansion and selection state attached via attachWithM so they don't trigger rebuild
                 let issueModeDyn ← issuesDyn.zipWith' (fun a b => (a, b)) treeModeDyn
-                let treeInputDyn ← issueModeDyn.zipWith' (fun (a, b) c => (a, b, c)) showClosedDyn
+                let dataChangeDyn ← issueModeDyn.zipWith' (fun (a, b) c => (a, b, c)) showClosedDyn
 
-                let _ ← dynWidget treeInputDyn fun (issues, mode, showClosed) => do
-                  let nodes := buildTreeNodes issues mode showClosed
+                -- Combine expansion and selection behaviors
+                let treeStateBehavior := Behavior.zip
+                  expandedBranchesDyn.current
+                  selectedLabelDyn.current
+
+                -- Attach current tree state when data changes (not when tree state changes)
+                let rebuildEvent ← Event.attachWithM
+                  (fun (expanded, selected) (issues, mode, showClosed) =>
+                    (issues, mode, showClosed, expanded, selected))
+                  treeStateBehavior
+                  dataChangeDyn.updated
+
+                -- Use initial values from app startup for holdDyn
+                let treeInputDyn ← holdDyn (initialIssues, TreeViewMode.byProject, false, #[], none) rebuildEvent
+
+                let _ ← dynWidget treeInputDyn fun (issues, mode, showClosed, expanded, selected) => do
+                  let nodes := buildTreeNodes issues mode showClosed expanded
 
                   if nodes.isEmpty then
                     text' "No issues found. Press 'n' to create one." captionStyle
                   else
-                    let treeResult ← forest' nodes { globalKeys := true }
+                    let treeResult ← forest' nodes { globalKeys := true, initialSelection := selected }
 
                     -- Handle tree selection by firing trigger event
                     let selectEvent ← Event.mapMaybeM (fun label =>
                       AppState.parseIssueIdFromLabel label) treeResult.onSelect
                     let fireIO ← Event.mapM (fun id => (fireSelectIssue id : IO Unit)) selectEvent
                     performEvent_ fireIO
+
+                    -- Handle branch toggle by extracting key from tree state and firing toggle
+                    -- The path gives us indices; we need to map to the expansion key
+                    let toggleKeyEvent ← Event.mapMaybeM (fun (path : Array Nat) => do
+                      -- Get the node label at this path and compute its expansion key
+                      computeExpansionKey nodes mode path) treeResult.onToggle
+                    let fireToggleIO ← Event.mapM (fun key => (fireToggleBranch key : IO Unit)) toggleKeyEvent
+                    performEvent_ fireToggleIO
+
+                    -- Track selection changes for restoring after rebuild
+                    let selectionIO ← Event.mapM (fun label => (fireSelectionUpdate label : IO Unit)) treeResult.selectedNode.updated
+                    performEvent_ selectionIO
                     pure ()
                 pure ()
 

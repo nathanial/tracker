@@ -235,6 +235,10 @@ structure AppState where
   statusMessage : String := ""
   /-- Error message -/
   errorMessage : String := ""
+  /-- Expanded branch labels (base labels without counts, e.g. "Reactive" or "Reactive/Open") -/
+  expandedBranches : Array String := #[]
+  /-- Currently selected tree node label (for restoring selection after rebuild) -/
+  selectedLabel : Option String := none
   deriving Inhabited
 
 namespace AppState
@@ -342,6 +346,43 @@ def cancelForm (state : AppState) : AppState :=
 /-- Update form state -/
 def updateForm (state : AppState) (f : FormState → FormState) : AppState :=
   { state with formState := f state.formState }
+
+/-- Extract base label from a branch label by stripping the count suffix.
+    "Reactive (5)" → "Reactive"
+    "Open (3)" → "Open" -/
+def baseLabel (label : String) : String :=
+  -- Find the last " (" and strip from there
+  match label.splitOn " (" with
+  | [base] => base
+  | parts =>
+    -- Rejoin all but the last part (in case label contains " (" somewhere)
+    if parts.length > 1 then
+      let allButLast := parts.dropLast
+      " (".intercalate allButLast |>.trimRight
+    else label
+
+/-- Get the expansion key for a branch, optionally with a parent prefix.
+    Used to track nested branches like "Reactive/Open". -/
+def expansionKey (parentKey : Option String) (label : String) : String :=
+  let base := baseLabel label
+  match parentKey with
+  | some parent => s!"{parent}/{base}"
+  | none => base
+
+/-- Check if a branch with the given key is expanded -/
+def isExpanded (state : AppState) (key : String) : Bool :=
+  state.expandedBranches.contains key
+
+/-- Toggle expansion state for a branch -/
+def toggleExpanded (state : AppState) (key : String) : AppState :=
+  if state.expandedBranches.contains key then
+    { state with expandedBranches := state.expandedBranches.filter (· != key) }
+  else
+    { state with expandedBranches := state.expandedBranches.push key }
+
+/-- Clear all expansion state (useful when switching tree view modes) -/
+def clearExpanded (state : AppState) : AppState :=
+  { state with expandedBranches := #[] }
 
 end AppState
 
