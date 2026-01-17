@@ -7,7 +7,7 @@ import Tracker.Core.Types
 import Tracker.Core.Storage
 import Tracker.CLI.Commands
 import Tracker.CLI.Handlers
-import Tracker.TUI
+import Tracker.TUI.App
 import Parlance
 
 namespace Tracker

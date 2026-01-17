@@ -6,7 +6,6 @@ package tracker where
     ⟨`autoImplicit, false⟩,
     ⟨`relaxedAutoImplicit, false⟩
   ]
-  precompileModules := true
 
 require terminus from "../../graphics/terminus"
 require parlance from "../../util/parlance"
