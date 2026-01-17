@@ -179,7 +179,7 @@ def run (config : Storage.Config) : IO Unit := do
             pure state.prevTreeViewMode
           else
             pure state.nextTreeViewMode
-        | .char 'c' | .char 'C' =>
+        | .char 'h' | .char 'H' =>
           pure state.toggleShowClosed
         | .char 'n' | .char 'N' =>
           pure state.enterCreate
@@ -287,42 +287,48 @@ def run (config : Storage.Config) : IO Unit := do
             let _ ← dynWidget viewModeDyn fun viewMode => do
               match viewMode with
               | .tree => do
-                -- Mode tabs
-                row' (gap := 0) {} do
-                  let modeIdx ← treeModeDyn.map' fun m =>
-                    match m with
+                -- Mode tabs - reactive to treeModeDyn
+                let tabsNode ← treeModeDyn.map' fun m =>
+                  let idx := match m with
                     | .byProject => 0
                     | .byStatus => 1
                     | .byProjectStatus => 2
-                  let idx ← sample modeIdx.current
-                  let _ ← tabs' #["By Project", "By Status", "By Project+Status"] idx
-                    { globalKeys := false, activeStyle := { fg := .ansi .cyan, modifier := { bold := true } } }
-                  pure ()
+                  let labels := #["By Project", "By Status", "By Project+Status"]
+                  let tabsText := Id.run do
+                    let mut result := ""
+                    for i in [:labels.size] do
+                      let label := labels[i]!
+                      result := result ++ (if i == idx then s!" [{label}] " else s!"  {label}  ")
+                    result
+                  RNode.text tabsText { fg := .ansi .cyan }
+                emit tabsNode
 
-                -- Tree
-                let issues ← sample issuesDyn.current
-                let mode ← sample treeModeDyn.current
-                let showClosed ← sample showClosedDyn.current
-                let nodes := buildTreeNodes issues mode showClosed
+                -- Tree - rebuild when issues, mode, or showClosed changes
+                let issueModeDyn ← issuesDyn.zipWith' (fun a b => (a, b)) treeModeDyn
+                let treeInputDyn ← issueModeDyn.zipWith' (fun (a, b) c => (a, b, c)) showClosedDyn
 
-                if nodes.isEmpty then
-                  text' "No issues found. Press 'n' to create one." captionStyle
-                else
-                  let treeResult ← forest' nodes { globalKeys := true }
+                let _ ← dynWidget treeInputDyn fun (issues, mode, showClosed) => do
+                  let nodes := buildTreeNodes issues mode showClosed
 
-                  -- Handle selection
-                  let _unsub ← SpiderM.liftIO <| treeResult.onSelect.subscribe fun label => do
-                    match AppState.parseIssueIdFromLabel label with
-                    | some id =>
-                      let state ← stateRef.get
-                      match state.issues.find? (·.id == id) with
-                      | some issue =>
-                        let newState := state.enterDetailFor issue
-                        stateRef.set newState
-                        fireStateUpdate newState
+                  if nodes.isEmpty then
+                    text' "No issues found. Press 'n' to create one." captionStyle
+                  else
+                    let treeResult ← forest' nodes { globalKeys := true }
+
+                    -- Handle selection
+                    let _unsub ← SpiderM.liftIO <| treeResult.onSelect.subscribe fun label => do
+                      match AppState.parseIssueIdFromLabel label with
+                      | some issueId =>
+                        let state ← stateRef.get
+                        match state.issues.find? (fun iss => iss.id == issueId) with
+                        | some issue =>
+                          let newState := state.enterDetailFor issue
+                          stateRef.set newState
+                          fireStateUpdate newState
+                        | none => pure ()
                       | none => pure ()
-                    | none => pure ()
-                  pure ()
+                    pure ()
+                pure ()
 
               | .detail => do
                 let issueOpt : Option Issue ← sample currentIssueDyn.current

@@ -33,7 +33,7 @@ def statusText (s : Status) : String :=
 
 /-- Get help text for tree view -/
 def treeViewHelp : String :=
-  "[Tab] Switch View  [↑/↓] Navigate  [Enter] Toggle/View  [c] Show Closed  [n] New  [q] Quit"
+  "[Tab] Switch View  [↑/↓] Navigate  [Enter] Toggle/View  [h] Show Closed  [n] New  [q] Quit"
 
 /-- Get help text for detail view -/
 def detailViewHelp : String :=
