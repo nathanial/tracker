@@ -1,5 +1,6 @@
 /-
   TUI main application using Terminus.Reactive.
+  Uses idiomatic FRP patterns with foldDynM for state management.
 -/
 import Tracker.Core.Types
 import Tracker.Core.Storage
@@ -18,10 +19,7 @@ open Reactive Reactive.Host
 
 /-! ## Styles -/
 
-/-- Caption style -/
 def captionStyle : Style := { fg := .ansi .brightBlack }
-
-/-- Body style -/
 def bodyStyle : Style := {}
 
 /-! ## Tree Building -/
@@ -34,7 +32,6 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
 
   match mode with
   | .byProject =>
-    -- Group by project
     let mut projectMap : List (String × Array Issue) := []
     for issue in filtered do
       let key := issue.project.getD "No Project"
@@ -102,7 +99,16 @@ def buildTreeNodes (issues : Array Issue) (mode : TreeViewMode) (showClosed : Bo
         nodes := nodes.push (TreeNode.collapsedBranch s!"{project} ({projectIssues.size})" statusBranches)
     nodes
 
-/-! ## Text Input Handler -/
+/-! ## Events -/
+
+/-- Raw events that can trigger state changes -/
+inductive AppEvent where
+  | key (kd : KeyData)
+  | refresh
+  | selectIssue (id : Nat)
+  deriving Inhabited
+
+/-! ## Form Input Handler -/
 
 /-- Handle text input for form fields -/
 def handleFormInput (state : AppState) (ke : KeyEvent) : AppState :=
@@ -137,6 +143,98 @@ def handleFormInput (state : AppState) (ke : KeyEvent) : AppState :=
         f.updateCurrentInput f.currentInput.moveToEnd
     | _ => state
 
+/-! ## Event Processing -/
+
+/-- Process an event, returning the new state. Handles key mapping internally. -/
+def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState) : IO AppState := do
+  match event with
+  | .refresh =>
+    let issues ← Storage.loadAllIssues config
+    pure { state with issues }
+
+  | .selectIssue id =>
+    match state.issues.find? (·.id == id) with
+    | some issue => pure (state.enterDetailFor issue)
+    | none => pure state
+
+  | .key kd =>
+    let ke := kd.event
+    match state.viewMode with
+    | .tree =>
+      match ke.code with
+      | .char 'q' | .char 'Q' => IO.Process.exit 0
+      | .tab =>
+        if ke.modifiers.shift then pure state.prevTreeViewMode
+        else pure state.nextTreeViewMode
+      | .char 'h' | .char 'H' => pure state.toggleShowClosed
+      | .char 'n' | .char 'N' => pure state.enterCreate
+      | .char 'r' | .char 'R' =>
+        let issues ← Storage.loadAllIssues config
+        pure { state with issues, statusMessage := s!"Refreshed {issues.size} issues" }
+      | _ => pure state
+
+    | .detail =>
+      match ke.code with
+      | .char 'q' | .char 'Q' => IO.Process.exit 0
+      | .escape => pure state.returnToTree
+      | .char 'e' | .char 'E' => pure state.enterEdit
+      | .char 'c' | .char 'C' =>
+        match state.currentIssue with
+        | some issue =>
+          if issue.status != .closed then
+            let _ ← Storage.closeIssue config issue.id none
+            let issues ← Storage.loadAllIssues config
+            let updatedIssue := issues.find? (·.id == issue.id)
+            pure { state with issues, currentIssue := updatedIssue, statusMessage := s!"Issue #{issue.id} closed" }
+          else
+            pure (state.setError "Issue already closed")
+        | none => pure state
+      | .char 'r' | .char 'R' =>
+        match state.currentIssue with
+        | some issue =>
+          if issue.status == .closed then
+            let _ ← Storage.reopenIssue config issue.id
+            let issues ← Storage.loadAllIssues config
+            let updatedIssue := issues.find? (·.id == issue.id)
+            pure { state with issues, currentIssue := updatedIssue, statusMessage := s!"Issue #{issue.id} reopened" }
+          else
+            pure (state.setError "Issue is not closed")
+        | none => pure state
+      | _ => pure state
+
+    | .create | .edit =>
+      match ke.code with
+      | .escape => pure state.cancelForm
+      | .tab =>
+        if ke.modifiers.shift then pure (state.updateForm FormState.prevField)
+        else pure (state.updateForm FormState.nextField)
+      | .char 's' | .char 'S' =>
+        if ke.modifiers.ctrl then
+          let form := state.formState
+          if form.isValid then
+            let title := form.title.text.trim
+            let description := form.description.text.trim
+            let priority := form.priority
+            let labels := form.getLabels
+            let assignee := form.getAssignee
+            let project := form.getProject
+            match form.editingIssueId with
+            | some id =>
+              let _ ← Storage.updateIssue config id fun issue =>
+                { issue with title, description, priority, labels, assignee, project }
+              let issues ← Storage.loadAllIssues config
+              let updatedIssue := issues.find? (·.id == id)
+              pure { state with issues, viewMode := .detail, currentIssue := updatedIssue, statusMessage := s!"Updated issue #{id}" }
+            | none =>
+              let newIssue ← Storage.createIssue config title description priority labels assignee project
+              let issues ← Storage.loadAllIssues config
+              pure { state with issues, viewMode := .detail, currentIssue := some newIssue, statusMessage := s!"Created issue #{newIssue.id}" }
+          else
+            pure (state.setError "Title is required")
+        else
+          pure (handleFormInput state ke)
+      | _ => pure (handleFormInput state ke)
+
 /-! ## Main App -/
 
 /-- Run the TUI application -/
@@ -154,111 +252,32 @@ def run (config : Storage.Config) : IO Unit := do
       showClosed := false
     }
 
-    -- State ref for imperative updates from IO
-    let stateRef ← SpiderM.liftIO (IO.mkRef initialState)
-
-    -- Trigger events for state updates
-    let (stateUpdateEvent, fireStateUpdate) ← newTriggerEvent (a := AppState)
-    let stateDyn ← holdDyn initialState stateUpdateEvent
-
-    -- Get key events
+    -- Get event sources
     let keyEvents ← useKeyEvent
+    let tickEvents ← useTick
 
-    -- Handle key events
-    let _unsub ← SpiderM.liftIO <| keyEvents.subscribe fun kd => do
-      let state ← stateRef.get
-      let ke := kd.event
+    -- Trigger event for tree selection (forest' widget fires this)
+    let (selectIssueEvent, fireSelectIssue) ← newTriggerEvent (a := Nat)
 
-      let newState ← match state.viewMode with
-      | .tree =>
-        match ke.code with
-        | .char 'q' | .char 'Q' =>
-          IO.Process.exit 0
-        | .tab =>
-          if ke.modifiers.shift then
-            pure state.prevTreeViewMode
-          else
-            pure state.nextTreeViewMode
-        | .char 'h' | .char 'H' =>
-          pure state.toggleShowClosed
-        | .char 'n' | .char 'N' =>
-          pure state.enterCreate
-        | .char 'r' | .char 'R' =>
-          let issues ← Storage.loadAllIssues config
-          pure { state with issues, statusMessage := s!"Loaded {issues.size} issues" }
-        | _ => pure state
+    -- Map raw events to AppEvent
+    let keyAppEvents ← Event.mapM (fun kd => AppEvent.key kd) keyEvents
 
-      | .detail =>
-        match ke.code with
-        | .char 'q' | .char 'Q' =>
-          IO.Process.exit 0
-        | .escape =>
-          pure state.returnToTree
-        | .char 'e' | .char 'E' =>
-          pure state.enterEdit
-        | .char 'c' | .char 'C' =>
-          match state.currentIssue with
-          | some issue =>
-            if issue.status != .closed then
-              let _ ← Storage.closeIssue config issue.id none
-              let issues ← Storage.loadAllIssues config
-              let updatedIssue := issues.find? (·.id == issue.id)
-              pure { state with issues, currentIssue := updatedIssue, statusMessage := s!"Issue #{issue.id} closed" }
-            else
-              pure (state.setError "Issue already closed")
-          | none => pure state
-        | .char 'r' | .char 'R' =>
-          match state.currentIssue with
-          | some issue =>
-            if issue.status == .closed then
-              let _ ← Storage.reopenIssue config issue.id
-              let issues ← Storage.loadAllIssues config
-              let updatedIssue := issues.find? (·.id == issue.id)
-              pure { state with issues, currentIssue := updatedIssue, statusMessage := s!"Issue #{issue.id} reopened" }
-            else
-              pure (state.setError "Issue is not closed")
-          | none => pure state
-        | _ => pure state
+    -- Periodic refresh: filter tick events to every 5 seconds
+    let refreshAppEvents ← Event.mapMaybeM (fun (td : TickData) =>
+      if td.elapsedMs % 5000 < 50 then some AppEvent.refresh else none) tickEvents
 
-      | .create | .edit =>
-        match ke.code with
-        | .escape =>
-          pure state.cancelForm
-        | .tab =>
-          if ke.modifiers.shift then
-            pure (state.updateForm FormState.prevField)
-          else
-            pure (state.updateForm FormState.nextField)
-        | .char 's' | .char 'S' =>
-          if ke.modifiers.ctrl then
-            let form := state.formState
-            if form.isValid then
-              let title := form.title.text.trim
-              let description := form.description.text.trim
-              let priority := form.priority
-              let labels := form.getLabels
-              let assignee := form.getAssignee
-              let project := form.getProject
-              match form.editingIssueId with
-              | some id =>
-                let _ ← Storage.updateIssue config id fun issue =>
-                  { issue with title, description, priority, labels, assignee, project }
-                let issues ← Storage.loadAllIssues config
-                let updatedIssue := issues.find? (·.id == id)
-                pure { state with issues, viewMode := .detail, currentIssue := updatedIssue, statusMessage := s!"Updated issue #{id}" }
-              | none =>
-                let newIssue ← Storage.createIssue config title description priority labels assignee project
-                let issues ← Storage.loadAllIssues config
-                pure { state with issues, viewMode := .detail, currentIssue := some newIssue, statusMessage := s!"Created issue #{newIssue.id}" }
-            else
-              pure (state.setError "Title is required")
-          else
-            pure (handleFormInput state ke)
-        | _ =>
-          pure (handleFormInput state ke)
+    -- Map tree selection to AppEvent
+    let selectAppEvents ← Event.mapM (fun id => AppEvent.selectIssue id) selectIssueEvent
 
-      stateRef.set newState
-      fireStateUpdate newState
+    -- Merge all event streams
+    let events1 ← Event.mergeM keyAppEvents refreshAppEvents
+    let allEvents ← Event.mergeM events1 selectAppEvents
+
+    -- Fold events into state using foldDynM (idiomatic FRP)
+    -- Key-to-action mapping happens inside processEvent with access to current state
+    let stateDyn ← foldDynM (fun event state => SpiderM.liftIO do
+      processEvent config event state
+    ) initialState allEvents
 
     -- Build the widget tree
     let (_, render) ← runWidget do
@@ -315,18 +334,11 @@ def run (config : Storage.Config) : IO Unit := do
                   else
                     let treeResult ← forest' nodes { globalKeys := true }
 
-                    -- Handle selection
-                    let _unsub ← SpiderM.liftIO <| treeResult.onSelect.subscribe fun label => do
-                      match AppState.parseIssueIdFromLabel label with
-                      | some issueId =>
-                        let state ← stateRef.get
-                        match state.issues.find? (fun iss => iss.id == issueId) with
-                        | some issue =>
-                          let newState := state.enterDetailFor issue
-                          stateRef.set newState
-                          fireStateUpdate newState
-                        | none => pure ()
-                      | none => pure ()
+                    -- Handle tree selection by firing trigger event
+                    let selectEvent ← Event.mapMaybeM (fun label =>
+                      AppState.parseIssueIdFromLabel label) treeResult.onSelect
+                    let fireIO ← Event.mapM (fun id => (fireSelectIssue id : IO Unit)) selectEvent
+                    performEvent_ fireIO
                     pure ()
                 pure ()
 
