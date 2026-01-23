@@ -102,6 +102,4 @@ test "error on unclosed frontmatter" := do
   | .ok _ => throwThe IO.Error "Should have failed"
   | .error _ => pure ()
 
-#generate_tests
-
 def main : IO UInt32 := runAllSuites
