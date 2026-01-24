@@ -21,6 +21,11 @@ lean_lib Tracker where
 lean_exe tracker where
   root := `Main
 
+-- Test library for all TrackerTests submodules
+lean_lib TrackerTests where
+  globs := #[.submodules `TrackerTests]
+  precompileModules := false
+
 @[test_driver]
 lean_exe tests where
   root := `TrackerTests.Main

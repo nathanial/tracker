@@ -4,6 +4,7 @@
 import Crucible
 import Tracker.Core.Parser
 import Tracker.Core.Types
+import TrackerTests.TUI
 
 open Crucible
 open Tracker.Parser
