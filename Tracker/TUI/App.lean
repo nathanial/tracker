@@ -321,7 +321,7 @@ def run (config : Storage.Config) : IO Unit := do
               match viewMode with
               | .tree => do
                 -- Mode tabs - reactive to treeModeDyn
-                let tabsNode ← treeModeDyn.map' fun m =>
+                let tabsNode ← Reactive.Host.Dynamic.mapUniq' treeModeDyn fun m =>
                   let idx := match m with
                     | .byProject => 0
                     | .byStatus => 1
@@ -342,7 +342,7 @@ def run (config : Storage.Config) : IO Unit := do
                   buildTreeData issues mode showClosed) showClosedDyn
 
                 -- Check if empty and render appropriately
-                let isEmptyDyn ← treeDataDyn.map' (·.isEmpty)
+                let isEmptyDyn ← Reactive.Host.Dynamic.mapUniq' treeDataDyn (·.isEmpty)
                 let _ ← dynWidget isEmptyDyn fun isEmpty => do
                   if isEmpty then
                     text' "No issues found. Press 'n' to create one." captionStyle
