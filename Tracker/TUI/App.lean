@@ -155,6 +155,11 @@ def handleFormInput (state : AppState) (ke : KeyEvent) : AppState :=
 
 /-! ## Event Processing -/
 
+/-- Ensure terminal is restored before exiting (Process.exit skips runReactiveApp teardown). -/
+def quitApp : IO AppState := do
+  Terminal.teardown
+  IO.Process.exit 0
+
 /-- Process an event, returning the new state. Handles key mapping internally. -/
 def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState) : IO AppState := do
   match event with
@@ -172,7 +177,7 @@ def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState)
     match state.viewMode with
     | .tree =>
       match ke.code with
-      | .char 'q' | .char 'Q' => IO.Process.exit 0
+      | .char 'q' | .char 'Q' => quitApp
       | .tab =>
         if ke.modifiers.shift then pure state.prevTreeViewMode
         else pure state.nextTreeViewMode
@@ -185,7 +190,7 @@ def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState)
 
     | .detail =>
       match ke.code with
-      | .char 'q' | .char 'Q' => IO.Process.exit 0
+      | .char 'q' | .char 'Q' => quitApp
       | .escape => pure state.returnToTree
       | .char 'e' | .char 'E' => pure state.enterEdit
       | .char 'c' | .char 'C' =>
