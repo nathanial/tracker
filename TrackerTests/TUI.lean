@@ -176,11 +176,11 @@ test "tree inside dynWidget responds to keys with state churn" := do
         treeViewMode := .byProject
         showClosed := false
       }
-      let stateDyn ← Reactive.Host.Dynamic.map' keyCountDyn fun n =>
+      let stateDyn ← keyCountDyn.map' fun n =>
         { baseState with statusMessage := s!"tick {n}" }
 
-      let viewModeDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.viewMode)
-      let issuesDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.issues)
+      let viewModeDyn ← stateDyn.mapUniq' (·.viewMode)
+      let issuesDyn ← stateDyn.mapUniq' (·.issues)
 
       column' (gap := 0) {} do
         text' "Header" {}

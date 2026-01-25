@@ -296,14 +296,14 @@ def run (config : Storage.Config) : IO Unit := do
     -- Build the widget tree
     let (_, render) ← runWidget do
       -- Derive dynamics from state
-      let viewModeDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.viewMode)
-      let issuesDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.issues)
-      let treeModeDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.treeViewMode)
-      let showClosedDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.showClosed)
-      let currentIssueDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.currentIssue)
-      let formStateDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.formState)
-      let statusMsgDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.statusMessage)
-      let errorMsgDyn ← Reactive.Host.Dynamic.mapUniq' stateDyn (·.errorMessage)
+      let viewModeDyn ← stateDyn.mapUniq' (·.viewMode)
+      let issuesDyn ← stateDyn.mapUniq' (·.issues)
+      let treeModeDyn ← stateDyn.mapUniq' (·.treeViewMode)
+      let showClosedDyn ← stateDyn.mapUniq' (·.showClosed)
+      let currentIssueDyn ← stateDyn.mapUniq' (·.currentIssue)
+      let formStateDyn ← stateDyn.mapUniq' (·.formState)
+      let statusMsgDyn ← stateDyn.mapUniq' (·.statusMessage)
+      let errorMsgDyn ← stateDyn.mapUniq' (·.errorMessage)
 
       dockBottom' (footerHeight := 1)
         -- Main content
@@ -321,7 +321,7 @@ def run (config : Storage.Config) : IO Unit := do
               match viewMode with
               | .tree => do
                 -- Mode tabs - reactive to treeModeDyn
-                let tabsNode ← Reactive.Host.Dynamic.mapUniq' treeModeDyn fun m =>
+                let tabsNode ← treeModeDyn.mapUniq' fun m =>
                   let idx := match m with
                     | .byProject => 0
                     | .byStatus => 1
@@ -342,7 +342,7 @@ def run (config : Storage.Config) : IO Unit := do
                   buildTreeData issues mode showClosed) showClosedDyn
 
                 -- Check if empty and render appropriately
-                let isEmptyDyn ← Reactive.Host.Dynamic.mapUniq' treeDataDyn (·.isEmpty)
+                let isEmptyDyn ← treeDataDyn.mapUniq' (·.isEmpty)
                 let _ ← dynWidget isEmptyDyn fun isEmpty => do
                   if isEmpty then
                     text' "No issues found. Press 'n' to create one." captionStyle
