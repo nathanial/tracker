@@ -16,3 +16,4 @@ Thumbs.db
 
 # Local issue tracking (for development/testing)
 .issues/
+.debug/

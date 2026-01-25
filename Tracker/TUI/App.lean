@@ -421,8 +421,11 @@ def formViewWidget (formStateDyn : Dyn FormState) : WidgetM Unit := do
 /-! ## Main App -/
 
 /-- Run the TUI application -/
-def run (config : Storage.Config) : IO Unit := do
-  runReactiveApp do
+def run (config : Storage.Config) (debugMode : Bool := false) : IO Unit := do
+  let appConfig : Terminus.Reactive.AppConfig := {
+    debugDir := if debugMode then some ".debug" else none
+  }
+  runReactiveApp (config := appConfig) do
     -- Load initial issues
     let initialIssues ← SpiderM.liftIO (Storage.loadAllIssues config)
 

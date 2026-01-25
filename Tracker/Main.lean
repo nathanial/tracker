@@ -20,11 +20,11 @@ def printHelp : IO Unit :=
   trackerCommand.printHelp
 
 /-- Launch TUI mode -/
-def launchTui : IO Unit := do
+def launchTui (debug : Bool := false) : IO Unit := do
   let cwd ← IO.currentDir
   match ← Storage.findIssuesRoot cwd with
   | some root =>
-    TUI.run { root }
+    TUI.run { root } debug
   | none =>
     IO.eprintln "Error: No .issues directory found."
     IO.eprintln "Run 'tracker init' to initialize issue tracking."
@@ -57,8 +57,8 @@ def main (args : List String) : IO UInt32 := do
     | .error message =>
       IO.eprintln message
       return 1
-    | .launchTui =>
-      launchTui
+    | .launchTui debug =>
+      launchTui debug
       return 0
 
   | .error .helpRequested =>

@@ -16,7 +16,7 @@ open Parlance
 inductive Result where
   | success (output : String)
   | error (message : String)
-  | launchTui  -- Signal to launch TUI instead
+  | launchTui (debug : Bool := false)  -- Signal to launch TUI instead
 
 /-- Get output mode from parse result -/
 def getMode (result : ParseResult) : Mode :=
@@ -280,7 +280,7 @@ def dispatch (parseResult : ParseResult) : IO Result := do
   | ["unblock"] => handleUnblock parseResult mode
   | ["deps"] => handleDeps parseResult mode
   | ["delete"] => handleDelete parseResult mode
-  | ["tui"] => return .launchTui
+  | ["tui"] => return .launchTui (parseResult.getBool "debug")
   | [] => return .launchTui  -- No subcommand = launch TUI
   | path => return .error (formatError s!"Unknown command: {String.intercalate " " path}" mode)
 

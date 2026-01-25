@@ -118,5 +118,6 @@ def trackerCommand : Command := command "tracker" do
   -- tui subcommand (explicit TUI launch)
   Cmd.subcommand "tui" do
     Cmd.description "Launch the interactive TUI"
+    Cmd.boolFlag "debug" (description := "Write changed frames to .debug/ directory")
 
 end Tracker.CLI
