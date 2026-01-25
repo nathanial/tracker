@@ -56,9 +56,25 @@ Tracker/
 | `tracker unblock <id> --by=<id>` | Remove blocking |
 | `tracker deps <id>` | Show dependency graph |
 | `tracker delete <id>` | Delete issue |
-| `tracker tui` | Launch interactive TUI |
+| `tracker tui [--debug]` | Launch interactive TUI |
 
 **Flags:** `-j`/`--json` for JSON output (default is text)
+
+## Debug Mode
+
+The TUI supports a `--debug` flag for capturing frames:
+
+```bash
+tracker tui --debug
+# Interact with TUI, then exit with Ctrl+Q
+ls .debug/           # View captured frames
+cat .debug/frame-000.txt  # Plain text output (no ANSI codes)
+```
+
+Only changed frames are written. This is useful for:
+- Debugging rendering issues
+- Creating reproducible test cases
+- Verifying TUI behavior without visual inspection
 
 ## Data Model
 
