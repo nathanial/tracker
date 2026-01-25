@@ -250,6 +250,174 @@ def processEvent (config : Storage.Config) (event : AppEvent) (state : AppState)
           pure (handleFormInput state ke)
       | _ => pure (handleFormInput state ke)
 
+/-! ## View Widgets -/
+
+/-- Header widget showing app title and closed issues indicator -/
+def headerWidget (showClosedDyn : Dyn Bool) : WidgetM Unit := do
+  row' (gap := 1) {} do
+    text' " Tracker " { fg := .ansi .cyan, modifier := { bold := true } }
+    let closedNode ← showClosedDyn.map' fun sc =>
+      RNode.text (if sc then "[showing closed]" else "") captionStyle
+    emit closedNode
+
+/-- Footer widget showing help text and status/error messages -/
+def footerWidget (viewModeDyn : Dyn ViewMode) (statusMsgDyn errorMsgDyn : Dyn String)
+    : WidgetM Unit := do
+  row' (gap := 2) {} do
+    let helpNode ← viewModeDyn.map' fun vm =>
+      match vm with
+      | .tree => RNode.text treeViewHelp captionStyle
+      | .detail => RNode.text detailViewHelp captionStyle
+      | .create | .edit => RNode.text formViewHelp captionStyle
+    emit helpNode
+    let msgNode ← statusMsgDyn.zipWith' (fun status error =>
+      if !status.isEmpty then RNode.text status { fg := .ansi .green }
+      else if !error.isEmpty then RNode.text error { fg := .ansi .red }
+      else RNode.empty
+    ) errorMsgDyn
+    emit msgNode
+
+/-- Tree view widget showing issues organized by project/status -/
+def treeViewWidget (issuesDyn : Dyn (Array Issue)) (treeModeDyn : Dyn TreeViewMode)
+    (showClosedDyn : Dyn Bool) (fireSelectIssue : Nat → IO Unit) : WidgetM Unit := do
+  -- Mode tabs - reactive to treeModeDyn
+  let tabsNode ← treeModeDyn.mapUniq' fun m =>
+    let idx := match m with
+      | .byProject => 0
+      | .byStatus => 1
+      | .byProjectStatus => 2
+    let labels := #["By Project", "By Status", "By Project+Status"]
+    let tabsText := Id.run do
+      let mut result := ""
+      for i in [:labels.size] do
+        let label := labels[i]!
+        result := result ++ (if i == idx then s!" [{label}] " else s!"  {label}  ")
+      result
+    RNode.text tabsText { fg := .ansi .cyan }
+  emit tabsNode
+
+  -- Build tree data dynamic from state components
+  let treeTupleDyn ← issuesDyn.zipWith' (fun a b => (a, b)) treeModeDyn
+  let treeDataDyn ← treeTupleDyn.zipWith' (fun (issues, mode) showClosed =>
+    buildTreeData issues mode showClosed) showClosedDyn
+
+  -- Check if empty and render appropriately
+  let isEmptyDyn ← treeDataDyn.mapUniq' (·.isEmpty)
+  let _ ← dynWidget isEmptyDyn fun isEmpty => do
+    if isEmpty then
+      text' "No issues found. Press 'n' to create one." captionStyle
+    else
+      -- Use the dynamic tree widget - state persists across data updates!
+      let treeResult ← forestDyn' treeDataDyn { globalKeys := true }
+
+      -- Handle tree selection by firing trigger event
+      let selectEvent ← Event.mapMaybeM (fun label =>
+        AppState.parseIssueIdFromLabel label) treeResult.onSelect
+      let fireIO ← Event.mapM (fun id => (fireSelectIssue id : IO Unit)) selectEvent
+      performEvent_ fireIO
+      pure ()
+  pure ()
+
+/-- Detail view widget showing a single issue's full details -/
+def detailViewWidget (currentIssueDyn : Dyn (Option Issue)) : WidgetM Unit := do
+  let _ ← dynWidget currentIssueDyn fun issueOpt => do
+    match issueOpt with
+    | some issue =>
+      column' (gap := 1) {} do
+        -- Title
+        text' s!"#{issue.id}: {issue.title}" { modifier := { bold := true } }
+
+        -- Status and Priority
+        let statusStr := statusText issue.status
+        let prioStr := priorityText issue.priority
+        row' (gap := 2) {} do
+          text' "Status: " captionStyle
+          text' statusStr bodyStyle
+          text' "  Priority: " captionStyle
+          text' prioStr bodyStyle
+
+        -- Timestamps
+        text' s!"Created: {issue.created}  |  Updated: {issue.updated}" captionStyle
+
+        -- Labels
+        if !issue.labels.isEmpty then
+          text' s!"Labels: {String.intercalate ", " issue.labels.toList}" bodyStyle
+
+        -- Assignee
+        if let some assignee := issue.assignee then
+          text' s!"Assignee: @{assignee}" bodyStyle
+
+        -- Project
+        if let some project := issue.project then
+          text' s!"Project: {project}" bodyStyle
+
+        -- Blocking relationships
+        if !issue.blockedBy.isEmpty then
+          text' s!"Blocked by: {String.intercalate ", " (issue.blockedBy.map (s!"#{·}")).toList}" { fg := .ansi .red }
+        if !issue.blocks.isEmpty then
+          text' s!"Blocks: {String.intercalate ", " (issue.blocks.map (s!"#{·}")).toList}" bodyStyle
+
+        -- Description
+        if !issue.description.isEmpty then
+          spacer' 1 1
+          text' "Description:" { modifier := { bold := true } }
+          text' issue.description bodyStyle
+
+        -- Progress entries
+        if !issue.progress.isEmpty then
+          spacer' 1 1
+          text' "Progress:" { modifier := { bold := true } }
+          for entry in issue.progress do
+            text' s!"  [{entry.timestamp}] {entry.message}" captionStyle
+
+    | none =>
+      text' "No issue selected." captionStyle
+  pure ()
+
+/-- Form view widget for creating/editing issues -/
+def formViewWidget (formStateDyn : Dyn FormState) : WidgetM Unit := do
+  let _ ← dynWidget formStateDyn fun form => do
+    let formTitle := if form.editingIssueId.isSome then "Edit Issue" else "New Issue"
+    column' (gap := 1) {} do
+      text' formTitle { modifier := { bold := true } }
+      spacer' 1 1
+
+      -- Title field
+      let titleFocused := form.focusedField == FormField.title
+      text' "Title:" (if titleFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {form.title.text}" (if titleFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Description field
+      let descFocused := form.focusedField == FormField.description
+      text' "Description:" (if descFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {form.description.text}" (if descFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Priority selector
+      let prioFocused := form.focusedField == FormField.priority
+      text' "Priority: (use ←/→ to change)" (if prioFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {priorityText form.priority}" (if prioFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Labels field
+      let labelsFocused := form.focusedField == FormField.labels
+      text' "Labels (comma-separated):" (if labelsFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {form.labels.text}" (if labelsFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Assignee field
+      let assigneeFocused := form.focusedField == FormField.assignee
+      text' "Assignee:" (if assigneeFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {form.assignee.text}" (if assigneeFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Project field
+      let projectFocused := form.focusedField == FormField.project
+      text' "Project:" (if projectFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
+      text' s!"  {form.project.text}" (if projectFocused then { fg := .ansi .white } else captionStyle)
+
+      -- Validation message
+      if !form.isValid then
+        spacer' 1 1
+        text' "Title is required" { fg := .ansi .red }
+  pure ()
+
 /-! ## Main App -/
 
 /-- Run the TUI application -/
@@ -309,169 +477,15 @@ def run (config : Storage.Config) : IO Unit := do
         -- Main content
         (do
           column' (gap := 0) {} do
-            -- Header
-            row' (gap := 1) {} do
-              text' " Tracker " { fg := .ansi .cyan, modifier := { bold := true } }
-              let closedNode ← showClosedDyn.map' fun sc =>
-                RNode.text (if sc then "[showing closed]" else "") captionStyle
-              emit closedNode
-
-            -- View content
+            headerWidget showClosedDyn
             let _ ← dynWidget viewModeDyn fun viewMode => do
               match viewMode with
-              | .tree => do
-                -- Mode tabs - reactive to treeModeDyn
-                let tabsNode ← treeModeDyn.mapUniq' fun m =>
-                  let idx := match m with
-                    | .byProject => 0
-                    | .byStatus => 1
-                    | .byProjectStatus => 2
-                  let labels := #["By Project", "By Status", "By Project+Status"]
-                  let tabsText := Id.run do
-                    let mut result := ""
-                    for i in [:labels.size] do
-                      let label := labels[i]!
-                      result := result ++ (if i == idx then s!" [{label}] " else s!"  {label}  ")
-                    result
-                  RNode.text tabsText { fg := .ansi .cyan }
-                emit tabsNode
-
-                -- Build tree data dynamic from state components
-                let treeTupleDyn ← issuesDyn.zipWith' (fun a b => (a, b)) treeModeDyn
-                let treeDataDyn ← treeTupleDyn.zipWith' (fun (issues, mode) showClosed =>
-                  buildTreeData issues mode showClosed) showClosedDyn
-
-                -- Check if empty and render appropriately
-                let isEmptyDyn ← treeDataDyn.mapUniq' (·.isEmpty)
-                let _ ← dynWidget isEmptyDyn fun isEmpty => do
-                  if isEmpty then
-                    text' "No issues found. Press 'n' to create one." captionStyle
-                  else
-                    -- Use the dynamic tree widget - state persists across data updates!
-                    let treeResult ← forestDyn' treeDataDyn { globalKeys := true }
-
-                    -- Handle tree selection by firing trigger event
-                    let selectEvent ← Event.mapMaybeM (fun label =>
-                      AppState.parseIssueIdFromLabel label) treeResult.onSelect
-                    let fireIO ← Event.mapM (fun id => (fireSelectIssue id : IO Unit)) selectEvent
-                    performEvent_ fireIO
-                    pure ()
-                pure ()
-
-              | .detail => do
-                let _ ← dynWidget currentIssueDyn fun issueOpt => do
-                  match issueOpt with
-                  | some issue =>
-                    column' (gap := 1) {} do
-                      -- Title
-                      text' s!"#{issue.id}: {issue.title}" { modifier := { bold := true } }
-
-                      -- Status and Priority
-                      let statusStr := statusText issue.status
-                      let prioStr := priorityText issue.priority
-                      row' (gap := 2) {} do
-                        text' "Status: " captionStyle
-                        text' statusStr bodyStyle
-                        text' "  Priority: " captionStyle
-                        text' prioStr bodyStyle
-
-                      -- Timestamps
-                      text' s!"Created: {issue.created}  |  Updated: {issue.updated}" captionStyle
-
-                      -- Labels
-                      if !issue.labels.isEmpty then
-                        text' s!"Labels: {String.intercalate ", " issue.labels.toList}" bodyStyle
-
-                      -- Assignee
-                      if let some assignee := issue.assignee then
-                        text' s!"Assignee: @{assignee}" bodyStyle
-
-                      -- Project
-                      if let some project := issue.project then
-                        text' s!"Project: {project}" bodyStyle
-
-                      -- Blocking relationships
-                      if !issue.blockedBy.isEmpty then
-                        text' s!"Blocked by: {String.intercalate ", " (issue.blockedBy.map (s!"#{·}")).toList}" { fg := .ansi .red }
-                      if !issue.blocks.isEmpty then
-                        text' s!"Blocks: {String.intercalate ", " (issue.blocks.map (s!"#{·}")).toList}" bodyStyle
-
-                      -- Description
-                      if !issue.description.isEmpty then
-                        spacer' 1 1
-                        text' "Description:" { modifier := { bold := true } }
-                        text' issue.description bodyStyle
-
-                      -- Progress entries
-                      if !issue.progress.isEmpty then
-                        spacer' 1 1
-                        text' "Progress:" { modifier := { bold := true } }
-                        for entry in issue.progress do
-                          text' s!"  [{entry.timestamp}] {entry.message}" captionStyle
-
-                  | none =>
-                    text' "No issue selected." captionStyle
-                pure ()
-
-              | .create | .edit => do
-                let _ ← dynWidget formStateDyn fun form => do
-                  let formTitle := if form.editingIssueId.isSome then "Edit Issue" else "New Issue"
-                  column' (gap := 1) {} do
-                    text' formTitle { modifier := { bold := true } }
-                    spacer' 1 1
-
-                    -- Title field
-                    let titleFocused := form.focusedField == FormField.title
-                    text' "Title:" (if titleFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {form.title.text}" (if titleFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Description field
-                    let descFocused := form.focusedField == FormField.description
-                    text' "Description:" (if descFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {form.description.text}" (if descFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Priority selector
-                    let prioFocused := form.focusedField == FormField.priority
-                    text' "Priority: (use ←/→ to change)" (if prioFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {priorityText form.priority}" (if prioFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Labels field
-                    let labelsFocused := form.focusedField == FormField.labels
-                    text' "Labels (comma-separated):" (if labelsFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {form.labels.text}" (if labelsFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Assignee field
-                    let assigneeFocused := form.focusedField == FormField.assignee
-                    text' "Assignee:" (if assigneeFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {form.assignee.text}" (if assigneeFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Project field
-                    let projectFocused := form.focusedField == FormField.project
-                    text' "Project:" (if projectFocused then { fg := .ansi .cyan, modifier := { bold := true } } else bodyStyle)
-                    text' s!"  {form.project.text}" (if projectFocused then { fg := .ansi .white } else captionStyle)
-
-                    -- Validation message
-                    if !form.isValid then
-                      spacer' 1 1
-                      text' "Title is required" { fg := .ansi .red }
-                pure ()
+              | .tree => treeViewWidget issuesDyn treeModeDyn showClosedDyn fireSelectIssue
+              | .detail => detailViewWidget currentIssueDyn
+              | .create | .edit => formViewWidget formStateDyn
         )
         -- Footer
-        (do
-          row' (gap := 2) {} do
-            let helpNode ← viewModeDyn.map' fun vm =>
-              match vm with
-              | .tree => RNode.text treeViewHelp captionStyle
-              | .detail => RNode.text detailViewHelp captionStyle
-              | .create | .edit => RNode.text formViewHelp captionStyle
-            emit helpNode
-            let msgNode ← statusMsgDyn.zipWith' (fun status error =>
-              if !status.isEmpty then RNode.text status { fg := .ansi .green }
-              else if !error.isEmpty then RNode.text error { fg := .ansi .red }
-              else RNode.empty
-            ) errorMsgDyn
-            emit msgNode
-        )
+        (footerWidget viewModeDyn statusMsgDyn errorMsgDyn)
 
     pure { render }
 
