@@ -308,7 +308,7 @@ def treeViewWidget (issuesDyn : Dyn (Array Issue)) (treeModeDyn : Dyn TreeViewMo
       text' "No issues found. Press 'n' to create one." captionStyle
     else
       -- Use the dynamic tree widget - state persists across data updates!
-      let treeResult ← forestDyn' treeDataDyn { globalKeys := true }
+      let treeResult ← forestDyn' treeDataDyn { globalKeys := true, expandByDefault := false }
 
       -- Handle tree selection by firing trigger event
       let selectEvent ← Event.mapMaybeM (fun label =>
