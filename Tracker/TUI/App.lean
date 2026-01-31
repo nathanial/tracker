@@ -283,6 +283,12 @@ def footerWidget (viewModeDyn : Dyn ViewMode) (statusMsgDyn errorMsgDyn errorSug
 /-- Tree view widget showing issues organized by project/status -/
 def treeViewWidget (issuesDyn : Dyn (Array Issue)) (treeModeDyn : Dyn TreeViewMode)
     (showClosedDyn : Dyn Bool) (fireSelectIssue : Nat → IO Unit) : WidgetM Unit := do
+  -- Get terminal height dynamically for tree scrolling
+  let resizeEvent ← useResizeW
+  let heightDyn ← holdDyn 24 (← Event.mapM (·.height) resizeEvent)
+  -- Reserve space for header/tabs/help/status (about 6 lines)
+  let maxVisibleDyn ← heightDyn.map' (fun h => if h > 8 then h - 6 else 2)
+
   -- Mode tabs - reactive to treeModeDyn
   let tabsNode ← treeModeDyn.mapUniq' fun m =>
     let idx := match m with
@@ -311,7 +317,7 @@ def treeViewWidget (issuesDyn : Dyn (Array Issue)) (treeModeDyn : Dyn TreeViewMo
       text' "No issues found. Press 'n' to create one." captionStyle
     else
       -- Use the dynamic tree widget - state persists across data updates!
-      let treeResult ← forestDyn' treeDataDyn { globalKeys := true, expandByDefault := false }
+      let treeResult ← forestDyn' treeDataDyn { globalKeys := true, expandByDefault := false, maxVisible := some maxVisibleDyn }
 
       -- Handle tree selection by firing trigger event
       let selectEvent ← Event.mapMaybeM (fun label =>
