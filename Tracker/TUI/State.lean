@@ -235,6 +235,8 @@ structure AppState where
   statusMessage : String := ""
   /-- Error message -/
   errorMessage : String := ""
+  /-- Error suggestion (actionable hint) -/
+  errorSuggestion : String := ""
   deriving Inhabited
 
 namespace AppState
@@ -297,15 +299,15 @@ def returnToTree (state : AppState) : AppState :=
 
 /-- Set status message -/
 def setStatus (state : AppState) (msg : String) : AppState :=
-  { state with statusMessage := msg, errorMessage := "" }
+  { state with statusMessage := msg, errorMessage := "", errorSuggestion := "" }
 
-/-- Set error message -/
-def setError (state : AppState) (msg : String) : AppState :=
-  { state with errorMessage := msg, statusMessage := "" }
+/-- Set error message with optional suggestion -/
+def setError (state : AppState) (msg : String) (suggestion : String := "") : AppState :=
+  { state with errorMessage := msg, errorSuggestion := suggestion, statusMessage := "" }
 
 /-- Clear messages -/
 def clearMessages (state : AppState) : AppState :=
-  { state with statusMessage := "", errorMessage := "" }
+  { state with statusMessage := "", errorMessage := "", errorSuggestion := "" }
 
 /-- Enter create mode -/
 def enterCreate (state : AppState) : AppState :=

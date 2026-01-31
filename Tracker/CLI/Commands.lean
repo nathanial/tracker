@@ -51,6 +51,11 @@ def trackerCommand : Command := command "tracker" do
       (description := "Filter by project")
     Cmd.boolFlag "blocked" (description := "Show only blocked issues")
 
+  -- search subcommand
+  Cmd.subcommand "search" do
+    Cmd.description "Search issues by keyword"
+    Cmd.arg "query" (description := "Keyword to search in title, description, and progress")
+
   -- show subcommand
   Cmd.subcommand "show" do
     Cmd.description "Show issue details"

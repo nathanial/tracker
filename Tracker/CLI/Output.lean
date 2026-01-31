@@ -76,11 +76,24 @@ def formatSuccess (message : String) (mode : Mode) : String :=
   | .json => s!"\{\"status\": \"success\", \"message\": \"{message}\"}"
   | .text => message
 
-/-- Format an error message -/
-def formatError (message : String) (mode : Mode) : String :=
+/-- Escape a string for JSON output -/
+private def escapeJson (s : String) : String :=
+  s.replace "\\" "\\\\"
+    |>.replace "\"" "\\\""
+    |>.replace "\n" "\\n"
+
+/-- Format an error message with optional actionable suggestion -/
+def formatError (message : String) (mode : Mode) (suggestion : Option String := none) : String :=
   match mode with
-  | .json => s!"\{\"status\": \"error\", \"message\": \"{message}\"}"
-  | .text => s!"Error: {message}"
+  | .json =>
+    let suggestionJson := match suggestion with
+      | some s => s!", \"suggestion\": \"{escapeJson s}\""
+      | none => ""
+    s!"\{\"status\": \"error\", \"message\": \"{escapeJson message}\"{suggestionJson}}"
+  | .text =>
+    match suggestion with
+    | some s => s!"Error: {message}\n  Hint: {s}"
+    | none => s!"Error: {message}"
 
 /-- Format dependency graph -/
 def formatDeps (issue : Issue) (allIssues : Array Issue) (mode : Mode) : String :=

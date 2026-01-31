@@ -261,7 +261,7 @@ def headerWidget (showClosedDyn : Dyn Bool) : WidgetM Unit := do
     emit closedNode
 
 /-- Footer widget showing help text and status/error messages -/
-def footerWidget (viewModeDyn : Dyn ViewMode) (statusMsgDyn errorMsgDyn : Dyn String)
+def footerWidget (viewModeDyn : Dyn ViewMode) (statusMsgDyn errorMsgDyn errorSuggDyn : Dyn String)
     : WidgetM Unit := do
   row' (gap := 2) {} do
     let helpNode ← viewModeDyn.map' fun vm =>
@@ -270,11 +270,14 @@ def footerWidget (viewModeDyn : Dyn ViewMode) (statusMsgDyn errorMsgDyn : Dyn St
       | .detail => RNode.text detailViewHelp captionStyle
       | .create | .edit => RNode.text formViewHelp captionStyle
     emit helpNode
-    let msgNode ← statusMsgDyn.zipWith' (fun status error =>
+    let errorPairDyn ← errorMsgDyn.zipWith' (·, ·) errorSuggDyn
+    let msgNode ← statusMsgDyn.zipWith' (fun status (error, sugg) =>
       if !status.isEmpty then RNode.text status { fg := .ansi .green }
-      else if !error.isEmpty then RNode.text error { fg := .ansi .red }
+      else if !error.isEmpty then
+        let hint := if sugg.isEmpty then "" else s!" ({sugg})"
+        RNode.text (error ++ hint) { fg := .ansi .red }
       else RNode.empty
-    ) errorMsgDyn
+    ) errorPairDyn
     emit msgNode
 
 /-- Tree view widget showing issues organized by project/status -/
@@ -475,6 +478,7 @@ def run (config : Storage.Config) (debugMode : Bool := false) : IO Unit := do
       let formStateDyn ← stateDyn.mapUniq' (·.formState)
       let statusMsgDyn ← stateDyn.mapUniq' (·.statusMessage)
       let errorMsgDyn ← stateDyn.mapUniq' (·.errorMessage)
+      let errorSuggDyn ← stateDyn.mapUniq' (·.errorSuggestion)
 
       dockBottom' (footerHeight := 1)
         -- Main content
@@ -488,7 +492,7 @@ def run (config : Storage.Config) (debugMode : Bool := false) : IO Unit := do
               | .create | .edit => formViewWidget formStateDyn
         )
         -- Footer
-        (footerWidget viewModeDyn statusMsgDyn errorMsgDyn)
+        (footerWidget viewModeDyn statusMsgDyn errorMsgDyn errorSuggDyn)
 
     pure { render }
 

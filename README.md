@@ -44,6 +44,9 @@ tracker -t list
 # Add progress notes
 tracker progress 1 "Found root cause in tokenizer"
 
+# Search issues
+tracker search "tokenizer"
+
 # Close an issue
 tracker close 1 "Fixed in commit abc123"
 
@@ -60,6 +63,7 @@ All commands output JSON by default. Add `-t` or `--text` before the subcommand 
 | `tracker init` | Initialize `.issues/` directory |
 | `tracker add <title>` | Create a new issue |
 | `tracker list` | List issues (with filters) |
+| `tracker search <query>` | Search issues by keyword |
 | `tracker show <id>` | Show issue details |
 | `tracker update <id>` | Update issue metadata |
 | `tracker progress <id> <msg>` | Add progress note |

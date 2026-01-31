@@ -19,7 +19,7 @@ def filterChars (s : String) (p : Char → Bool) : String :=
 def findIdx? (s : String) (p : Char → Bool) : Option Nat := Id.run do
   let chars := s.toList
   for i in [:chars.length] do
-    if let some c := chars.get? i then
+    if let some c := chars[i]? then
       if p c then return some i
   return none
 
@@ -28,11 +28,28 @@ def trim (s : String) : String :=
   s.dropWhile Char.isWhitespace |>.dropRightWhile Char.isWhitespace
 
 /-- Check if string starts with a prefix -/
-def startsWith (s : String) (prefix : String) : Bool :=
-  s.take prefix.length == prefix
+def startsWith (s : String) (pre : String) : Bool :=
+  s.take pre.length == pre
 
 /-- Check if string ends with a suffix -/
-def endsWith (s : String) (suffix : String) : Bool :=
-  s.takeRight suffix.length == suffix
+def endsWith (s : String) (suf : String) : Bool :=
+  s.takeRight suf.length == suf
+
+/-- Check if string contains a substring -/
+def containsSubstr (s : String) (needle : String) : Bool :=
+  if needle.isEmpty then
+    true
+  else
+    let haystack := s.toList
+    let target := needle.toList
+    let rec isPrefix : List Char → List Char → Bool
+      | [], _ => true
+      | _, [] => false
+      | n :: ns, h :: hs => n == h && isPrefix ns hs
+    let rec loop : List Char → Bool
+      | [] => false
+      | rest@(_ :: xs) =>
+        if isPrefix target rest then true else loop xs
+    loop haystack
 
 end Tracker.Util

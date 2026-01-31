@@ -47,6 +47,7 @@ Tracker/
 | `tracker init` | Initialize `.issues/` directory |
 | `tracker add "Title" [--priority=X] [--project=X] [--label=X]` | Create issue |
 | `tracker list [--all] [--status=X] [--project=X] [--blocked]` | List issues |
+| `tracker search <query>` | Search issues by keyword |
 | `tracker show <id>` | Show issue details |
 | `tracker update <id> [--status=X] [--priority=X] [--title=X]` | Update issue |
 | `tracker progress <id> "message"` | Add timestamped progress note |

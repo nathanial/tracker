@@ -3,6 +3,7 @@
 -/
 import Tracker.Core.Types
 import Tracker.Core.Parser
+import Tracker.Core.Util
 import Chronos
 
 namespace Tracker.Storage
@@ -247,6 +248,20 @@ def listIssues (config : Config) (filter : ListFilter := {}) : IO (Array Issue) 
     let blockedOk := !filter.blockedOnly || issue.isBlocked
     statusOk && labelOk && assigneeOk && projectOk && blockedOk
   return filtered
+
+/-- Search issues by keyword across title, description, and progress notes. -/
+def searchIssuesIn (issues : Array Issue) (query : String) : Array Issue :=
+  let term := Util.trim query |>.toLower
+  if term.isEmpty then
+    #[]
+  else
+    let containsTerm (text : String) : Bool :=
+      Util.containsSubstr (text.toLower) term
+    let matchesTerm (issue : Issue) : Bool :=
+      containsTerm issue.title ||
+      containsTerm issue.description ||
+      issue.progress.any (fun entry => containsTerm entry.message)
+    issues.filter matchesTerm
 
 /-- Delete an issue (removes the file) -/
 def deleteIssue (config : Config) (id : Nat) : IO Bool := do

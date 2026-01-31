@@ -3,12 +3,14 @@
 -/
 import Crucible
 import Tracker.Core.Parser
+import Tracker.Core.Storage
 import Tracker.Core.Types
 import TrackerTests.TUI
 
 open Crucible
 open Tracker.Parser
 open Tracker
+open Tracker.Storage
 
 testSuite "Tracker.Parser"
 
@@ -88,6 +90,79 @@ test "round-trip simple issue" := do
       issue2.title ≡ issue.title
     | .error e => throwThe IO.Error s!"Second parse failed: {e}"
   | .error e => throwThe IO.Error s!"First parse failed: {e}"
+
+/-! ## Search -/
+
+test "search matches title description and progress" := do
+  let issue1 : Issue := {
+    id := 1
+    title := "Fix parser crash"
+    status := Status.open_
+    priority := Priority.high
+    created := "2026-01-01T00:00:00"
+    updated := "2026-01-01T00:00:00"
+    labels := #[]
+    assignee := none
+    project := none
+    blocks := #[]
+    blockedBy := #[]
+    description := "Tokenizer fails on emoji input"
+    progress := #[]
+  }
+  let issue2 : Issue := {
+    id := 2
+    title := "UI polish"
+    status := Status.open_
+    priority := Priority.medium
+    created := "2026-01-01T00:00:00"
+    updated := "2026-01-01T00:00:00"
+    labels := #[]
+    assignee := none
+    project := none
+    blocks := #[]
+    blockedBy := #[]
+    description := ""
+    progress := #[{ timestamp := "2026-01-02T00:00:00", message := "Investigate parser regression" }]
+  }
+  let issue3 : Issue := {
+    id := 3
+    title := "Docs cleanup"
+    status := Status.open_
+    priority := Priority.low
+    created := "2026-01-01T00:00:00"
+    updated := "2026-01-01T00:00:00"
+    labels := #[]
+    assignee := none
+    project := none
+    blocks := #[]
+    blockedBy := #[]
+    description := "Improve onboarding"
+    progress := #[]
+  }
+  let results := searchIssuesIn #[issue1, issue2, issue3] "parser"
+  results.size ≡ 2
+  results.any (·.id == 1) ≡ true
+  results.any (·.id == 2) ≡ true
+  results.any (·.id == 3) ≡ false
+
+test "search is case-insensitive" := do
+  let issue : Issue := {
+    id := 4
+    title := "Parser regression"
+    status := Status.open_
+    priority := Priority.medium
+    created := "2026-01-01T00:00:00"
+    updated := "2026-01-01T00:00:00"
+    labels := #[]
+    assignee := none
+    project := none
+    blocks := #[]
+    blockedBy := #[]
+    description := ""
+    progress := #[]
+  }
+  let results := searchIssuesIn #[issue] "PARSER"
+  results.size ≡ 1
 
 /-! ## Error Cases -/
 
